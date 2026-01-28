@@ -632,6 +632,62 @@ source ~/.zshrc
 
 # Update to latest version
 npx @kokorolx/ai-sandbox-wrapper@latest setup
+
+# Clean up caches and configs
+npx @kokorolx/ai-sandbox-wrapper clean
+```
+
+### Cleanup Command
+
+The `clean` command provides an interactive way to remove AI Sandbox directories:
+
+```bash
+npx @kokorolx/ai-sandbox-wrapper clean
+```
+
+**Features:**
+- Two-level menu: First select category, then specific tools/items
+- Shows directory sizes before deletion
+- Groups items by risk level (🟢 Safe, 🟡 Medium, 🔴 Critical)
+- Requires typing "yes" to confirm deletion
+
+**Categories:**
+| Category | Contents | Risk |
+|----------|----------|------|
+| Tool caches | `~/.ai-cache/{tool}/` | 🟢 Safe to delete |
+| Tool configs | `~/.ai-home/{tool}/` | 🟡 Loses settings |
+| Global config | `~/.ai-sandbox/`, `~/.ai-workspaces`, `~/.ai-env`, etc. | 🟡🔴 Mixed |
+
+**Example:**
+```
+🧹 AI Sandbox Cleanup
+
+What would you like to clean?
+  1. Tool caches (~/.ai-cache/) - Safe to delete
+  2. Tool configs (~/.ai-home/) - Loses settings
+  3. Global config files - Loses preferences
+  4. All of the above
+
+Enter selection (or 'q' to quit): 1
+
+📁 Tool Caches (~/.ai-cache/)
+
+Select tools to clear:
+  1. claude/ (45.2 MB)
+  2. opencode/ (120.5 MB)
+
+Enter selection (comma-separated, 'all', or 'b' to go back): 1
+
+You are about to delete:
+  - ~/.ai-cache/claude/ (45.2 MB)
+
+Total: 45.2 MB
+
+Type 'yes' to confirm: yes
+
+✓ Deleted ~/.ai-cache/claude/
+
+Deleted 1 items, freed 45.2 MB
 ```
 
 ## 🤝 Contributing
