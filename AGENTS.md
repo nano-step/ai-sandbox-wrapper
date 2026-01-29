@@ -59,10 +59,11 @@ Security-focused wrapper that runs AI coding tools (Claude, Gemini, Aider, etc.)
 ## Unique Styles
 
 1. **Interactive menus** in setup.sh using tput for terminal control
-2. **Workspace whitelisting** via `~/.ai-workspaces` file
+2. **Workspace whitelisting** via `~/.ai-sandbox/workspaces` file
 3. **Per-tool Docker images** - each AI tool has dedicated container
 4. **SSH key selector** - user chooses which keys to share per workspace
 5. **Image source selection** - local build vs. GitLab registry
+6. **Consolidated config** - all config in `~/.ai-sandbox/` directory
 
 ## Commands
 
@@ -75,10 +76,10 @@ ai-run claude
 claude --version  # If symlinked during setup
 
 # Add new workspace
-echo '/path/to/project' >> ~/.ai-workspaces
+echo '/path/to/project' >> ~/.ai-sandbox/workspaces
 
 # Configure API keys
-nano ~/.ai-env
+nano ~/.ai-sandbox/env
 ```
 
 ## Security Model
@@ -140,6 +141,6 @@ docker ps --filter "name=opencode-" --filter "name=claude-"
 
 - Requires Docker running before setup
 - Must run `source ~/.zshrc` after setup to get `ai-run` in PATH
-- API keys not passed to containers unless in `~/.ai-env`
+- API keys not passed to containers unless in `~/.ai-sandbox/env`
 - Git access requires explicit user permission per workspace
 - Dockerfiles use Bun runtime by default (ai-base image)

@@ -141,6 +141,6 @@ ENV HOME=/home/agent
 EOF
 
 echo "Building base Docker image with Bun runtime..."
-docker build -t "ai-base:latest" "dockerfiles/base"
+docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-base:latest" "dockerfiles/base"
 echo "✅ Base image built (ai-base:latest)"
 

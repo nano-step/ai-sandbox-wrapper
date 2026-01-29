@@ -8,8 +8,8 @@ echo "Installing $TOOL (Anthropic Claude Code - Native Binary)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-cache/$TOOL"
-mkdir -p "$HOME/.ai-home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
 
 # Create Dockerfile using official native installer (no npm needed)
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
@@ -28,7 +28,7 @@ EOF
 
 # Build image
 echo "Building Docker image for $TOOL (native binary)..."
-docker build -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
+docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
 
 echo "✅ $TOOL installed (Native Binary)"
 echo ""

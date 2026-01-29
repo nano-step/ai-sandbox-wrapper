@@ -8,7 +8,32 @@ AI coding tools like Claude, Gemini, and Aider have full access to your filesyst
 
 **What you get:** Peace of mind using AI coding tools without risking your personal and system data.
 
-*Last updated: Thursday, January 22, 2026*
+*Last updated: Wednesday, January 29, 2026*
+
+## ⚠️ Breaking Change: v2.0.0 - Config Directory Consolidation
+
+**Version 2.0.0** consolidates all configuration from multiple directories into a single `~/.ai-sandbox/` directory.
+
+**Automatic Migration:** When you run any AI tool, the wrapper automatically migrates your existing configuration:
+
+**Global configs:**
+- `~/.ai-cache/` → `~/.ai-sandbox/cache/`
+- `~/.ai-home/` → `~/.ai-sandbox/home/`
+- `~/.ai-workspaces` → `~/.ai-sandbox/workspaces`
+- `~/.ai-env` → `~/.ai-sandbox/env`
+- `~/.ai-git-allowed` → `~/.ai-sandbox/git-allowed`
+- `~/.ai-git-keys-*` → `~/.ai-sandbox/git-keys/`
+
+**Tool-specific configs (copied per-tool on first run):**
+- `~/.config/amp/` → `~/.ai-sandbox/home/amp/.config/amp/`
+- `~/.local/share/amp/` → `~/.ai-sandbox/home/amp/.local/share/amp/`
+- `~/.claude/` → `~/.ai-sandbox/home/claude/.claude/`
+- `~/.config/opencode/` → `~/.ai-sandbox/home/opencode/.config/opencode/`
+- (and similar for other tools)
+
+**No action required** - migration happens automatically on first run. A `.migrated` marker file prevents re-migration of global configs.
+
+**Note:** Tool configs are **copied** (not moved), so your native tools continue to work with their original configs. The sandbox gets its own copy.
 
 ## 🛡️ Why Use This?
 
@@ -53,6 +78,13 @@ cd ai-sandbox-wrapper
 ./setup.sh
 ```
 
+**Fresh build (no Docker cache):**
+```bash
+npx @kokorolx/ai-sandbox-wrapper setup --no-cache
+# or
+./setup.sh --no-cache
+```
+
 ### Step 3: Follow the Interactive Prompts
 1. **Whitelist workspaces** - Enter the directories where you want AI tools to access (e.g., `~/projects,~/code`)
 2. **Select tools** - Use arrow keys to move, space to select, Enter to confirm
@@ -64,7 +96,7 @@ cd ai-sandbox-wrapper
 source ~/.zshrc
 
 # Add your API keys (only if using tools that require them)
-nano ~/.ai-env  # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.
+nano ~/.ai-sandbox/env  # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.
 ```
 
 ### Step 5: Run Your First Tool
@@ -105,16 +137,16 @@ claude --version
 If you want to give AI access to more project directories later:
 ```bash
 # Add a new workspace
-echo '/path/to/new/project' >> ~/.ai-workspaces
+echo '/path/to/new/project' >> ~/.ai-sandbox/workspaces
 
 # View current allowed directories
-cat ~/.ai-workspaces
+cat ~/.ai-sandbox/workspaces
 ```
 
 ### Configure API Keys (If Needed)
 Some tools require API keys to work properly:
 ```bash
-nano ~/.ai-env
+nano ~/.ai-sandbox/env
 ```
 Then add your keys in the format: `KEY_NAME=your_actual_key_here`
 Examples:
@@ -194,62 +226,63 @@ docker pull registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-aider:latest
 
 ## 📁 Directory Structure
 
-AI Sandbox Wrapper creates and manages the following directories in your home folder:
+AI Sandbox Wrapper creates and manages a single consolidated directory in your home folder:
 
 | Directory | Purpose | Contents |
 |-----------|---------|----------|
 | `~/bin/` | Executables | `ai-run` wrapper and symlinks to tool scripts |
-| `~/.ai-env` | API keys | Environment variables passed to containers (API keys) |
-| `~/.ai-workspaces` | Security | List of whitelisted directories AI can access |
-| `~/.ai-git-allowed` | Security | Workspaces where Git credentials are allowed |
-| `~/.ai-cache/` | Caching | Tool-specific cache directories (e.g., `~/.ai-cache/claude/`) |
-| `~/.ai-home/` | Config | Tool home directories with persistent configs |
+| `~/.ai-sandbox/` | All config | Consolidated configuration directory (see structure below) |
 | `~/.ai-images/` | Local images | Locally built Docker images (if not using registry) |
+
+### Sandbox Structure
+
+```
+~/.ai-sandbox/
+├── cache/           # Tool-specific cache directories
+│   ├── claude/      # Claude Code cache
+│   ├── gemini/      # Gemini CLI cache
+│   ├── aider/       # Aider cache
+│   └── git/         # Git credentials cache (when enabled)
+│       └── ssh/     # SSH keys and config for allowed workspace
+├── home/            # Tool home directories with persistent configs
+│   ├── claude/      # .claude.json and settings
+│   ├── gemini/      # Gemini configuration
+│   ├── aider/       # Aider config and history
+│   └── .gitconfig   # Git configuration (when Git access enabled)
+├── config.json      # Network configuration
+├── workspaces       # List of whitelisted directories AI can access
+├── env              # API keys (format: KEY=value, one per line)
+├── git-allowed      # Workspaces with persistent Git access
+├── git-keys/        # Saved SSH key selections for each workspace
+│   └── {hash}       # MD5-hashed workspace path
+└── .migrated        # Migration marker (prevents re-migration)
+```
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `~/.ai-env` | API keys (format: `KEY=value`, one per line) |
-| `~/.ai-git-allowed` | Workspaces with persistent Git access (one path per line) |
-| `~/.ai-git-keys-*` | Saved SSH key selections for each workspace (md5-hashed) |
-
-### Cache Structure
-
-```
-~/.ai-cache/
-├── claude/          # Claude Code cache
-├── gemini/          # Gemini CLI cache
-├── aider/           # Aider cache
-├── git/             # Git credentials cache (when enabled)
-│   └── ssh/         # SSH keys and config for allowed workspace
-```
-
-### Home Structure
-
-```
-~/.ai-home/
-├── claude/          # .claude.json and settings
-├── gemini/          # Gemini configuration
-├── aider/           # Aider config and history
-└── .gitconfig       # Git configuration (when Git access enabled)
-```
+| `~/.ai-sandbox/env` | API keys (format: `KEY=value`, one per line) |
+| `~/.ai-sandbox/workspaces` | Whitelisted directories AI can access |
+| `~/.ai-sandbox/git-allowed` | Workspaces with persistent Git access (one path per line) |
+| `~/.ai-sandbox/git-keys/*` | Saved SSH key selections for each workspace (md5-hashed) |
+| `~/.ai-sandbox/config.json` | Network configuration |
 
 ## ⚙️ Configuration
 
 ### API Keys
 ```bash
 # Edit environment file
-nano ~/.ai-env
+nano ~/.ai-sandbox/env
 ```
 
 ### Workspace Management
 ```bash
 # Add workspace
-echo '/path/to/project' >> ~/.ai-workspaces
+echo '/path/to/project' >> ~/.ai-sandbox/workspaces
 
 # List workspaces
-cat ~/.ai-workspaces
+cat ~/.ai-sandbox/workspaces
 ```
 
 ### Network Configuration
@@ -298,13 +331,13 @@ When running without the flag, saved networks are used silently:
 
 ### Environment Variables
 
-All environment variables are configured in `~/.ai-env` or passed at runtime:
+All environment variables are configured in `~/.ai-sandbox/env` or passed at runtime:
 
 #### Image Source
 Choose between locally built images or pre-built GitLab registry images:
 
 ```bash
-# Add to ~/.ai-env
+# Add to ~/.ai-sandbox/env
 
 # Use locally built images (default)
 AI_IMAGE_SOURCE=local
@@ -373,7 +406,7 @@ rails server -b 0.0.0.0
 ```
 
 #### API Keys
-Configure in `~/.ai-env`:
+Configure in `~/.ai-sandbox/env`:
 
 ```bash
 # Required for Claude tools
@@ -395,15 +428,17 @@ Each tool supports project-specific config files that override global settings:
 
 | Tool | Project Config | Global Config Location |
 |------|----------------|------------------------|
-| Claude | `.claude.json` | `~/.claude/` |
-| Gemini | `.gemini.json` | `~/.config/gemini/` |
-| Aider | `.aider.conf` | `~/.config/aider/` |
-| Opencode | `.opencode.json` | `~/.config/opencode/` |
-| Kilo | `.kilo.json` | `~/.config/kilo/` |
-| Codex | `.codex.json` | `~/.config/codex/` |
-| Amp | `.amp.json` | `~/.config/amp/` |
+| Claude | `.claude.json` | `~/.ai-sandbox/home/claude/.claude/` |
+| Gemini | `.gemini.json` | `~/.ai-sandbox/home/gemini/.config/gemini/` |
+| Aider | `.aider.conf` | `~/.ai-sandbox/home/aider/.config/aider/` |
+| Opencode | `.opencode.json` | `~/.ai-sandbox/home/opencode/.config/opencode/` |
+| Kilo | `.kilo.json` | `~/.ai-sandbox/home/kilo/.config/kilo/` |
+| Codex | `.codex.json` | `~/.ai-sandbox/home/codex/.config/codex/` |
+| Amp | `.amp.json` | `~/.ai-sandbox/home/amp/.config/amp/` |
 
 **Priority:** Project config > Global config > Container defaults
+
+**Note:** Existing configs from `~/.config/{tool}/` or `~/.claude/` are automatically migrated to the new location on first run.
 
 ```bash
 # Example: Project-specific Claude config
@@ -418,14 +453,15 @@ EOF
 
 ### Tool-Specific Config Locations
 
-When using global configs (not project-specific), they're stored in:
+All tool configs are consolidated under `~/.ai-sandbox/home/{tool}/`:
 
 ```
-~/.ai-home/{tool}/
+~/.ai-sandbox/home/{tool}/
 ├── .config/          # Tool configuration
 │   └── {tool}/       # Per-tool config directory
 ├── .local/share/     # Tool data (cache, sessions)
-└── .cache/           # Runtime cache
+├── .cache/           # Runtime cache
+└── .claude/          # Claude-specific (for claude tool)
 ```
 
 Each tool's config is mounted to `/home/agent/` inside the container.
@@ -516,10 +552,10 @@ Allow AI tool to access Git credentials for this workspace?
 **Managing Git access:**
 ```bash
 # View allowed workspaces
-cat ~/.ai-git-allowed
+cat ~/.ai-sandbox/git-allowed
 
 # Remove a workspace from allowed list
-nano ~/.ai-git-allowed  # Delete the line
+nano ~/.ai-sandbox/git-allowed  # Delete the line
 ```
 
 **Why this is secure:**
@@ -571,11 +607,11 @@ nano ~/.ai-git-allowed  # Delete the line
 - Look for the Docker image: `docker images | grep ai-`
 
 **"Outside whitelisted workspace" error**
-- Add your current directory: `echo "$(pwd)" >> ~/.ai-workspaces`
+- Add your current directory: `echo "$(pwd)" >> ~/.ai-sandbox/workspaces`
 - Or navigate to a directory you whitelisted during setup
 
 **API key errors**
-- Check your keys in: `cat ~/.ai-env`
+- Check your keys in: `cat ~/.ai-sandbox/env`
 - Make sure keys are in format: `KEY_NAME=actual_key_value`
 
 ### Getting Help
@@ -583,9 +619,9 @@ nano ~/.ai-git-allowed  # Delete the line
 If you're still having issues:
 1. Check that Docker is running
 2. Re-run `./setup.sh` to reinstall
-3. Look at the configuration files in your home directory:
-   - `~/.ai-workspaces` - should contain your project directories
-   - `~/.ai-env` - should contain your API keys (if needed)
+3. Look at the configuration files in `~/.ai-sandbox/`:
+   - `~/.ai-sandbox/workspaces` - should contain your project directories
+   - `~/.ai-sandbox/env` - should contain your API keys (if needed)
 4. View Docker images: `docker images` to see if tools built successfully
 
 ## 📚 Quick Reference
@@ -614,15 +650,15 @@ ai-run opencode --shell  # or -s
 See [SHELL-MODE-USAGE.md](SHELL-MODE-USAGE.md) for detailed examples and use cases.
 
 ### Configuration Files
-- `~/.ai-env` - Store API keys here
-- `~/.ai-workspaces` - Whitelisted project directories
-- `~/.ai-cache/` - Tool cache (persistent)
-- `~/.ai-home/` - Tool configurations (persistent)
+- `~/.ai-sandbox/env` - Store API keys here
+- `~/.ai-sandbox/workspaces` - Whitelisted project directories
+- `~/.ai-sandbox/cache/` - Tool cache (persistent)
+- `~/.ai-sandbox/home/` - Tool configurations (persistent)
 
 ### Common Tasks
 ```bash
 # Add a new project directory to AI access
-echo '/path/to/my/new/project' >> ~/.ai-workspaces
+echo '/path/to/my/new/project' >> ~/.ai-sandbox/workspaces
 
 # Check what tools are installed
 ls ~/bin/
@@ -654,23 +690,24 @@ npx @kokorolx/ai-sandbox-wrapper clean
 **Categories:**
 | Category | Contents | Risk |
 |----------|----------|------|
-| Tool caches | `~/.ai-cache/{tool}/` | 🟢 Safe to delete |
-| Tool configs | `~/.ai-home/{tool}/` | 🟡 Loses settings |
-| Global config | `~/.ai-sandbox/`, `~/.ai-workspaces`, `~/.ai-env`, etc. | 🟡🔴 Mixed |
+| Tool caches | `~/.ai-sandbox/cache/{tool}/` | 🟢 Safe to delete |
+| Tool configs | `~/.ai-sandbox/home/{tool}/` | 🟡 Loses settings |
+| Global config | `~/.ai-sandbox/workspaces`, `~/.ai-sandbox/env`, etc. | 🟡🔴 Mixed |
+| Everything | `~/.ai-sandbox/` | 🔴 Full reset |
 
 **Example:**
 ```
 🧹 AI Sandbox Cleanup
 
 What would you like to clean?
-  1. Tool caches (~/.ai-cache/) - Safe to delete
-  2. Tool configs (~/.ai-home/) - Loses settings
+  1. Tool caches (~/.ai-sandbox/cache/) - Safe to delete
+  2. Tool configs (~/.ai-sandbox/home/) - Loses settings
   3. Global config files - Loses preferences
-  4. All of the above
+  4. Everything (~/.ai-sandbox/) - Full reset
 
 Enter selection (or 'q' to quit): 1
 
-📁 Tool Caches (~/.ai-cache/)
+📁 Tool Caches (~/.ai-sandbox/cache/)
 
 Select tools to clear:
   1. claude/ (45.2 MB)
@@ -679,13 +716,13 @@ Select tools to clear:
 Enter selection (comma-separated, 'all', or 'b' to go back): 1
 
 You are about to delete:
-  - ~/.ai-cache/claude/ (45.2 MB)
+  - ~/.ai-sandbox/cache/claude/ (45.2 MB)
 
 Total: 45.2 MB
 
 Type 'yes' to confirm: yes
 
-✓ Deleted ~/.ai-cache/claude/
+✓ Deleted ~/.ai-sandbox/cache/claude/
 
 Deleted 1 items, freed 45.2 MB
 ```

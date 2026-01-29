@@ -7,23 +7,29 @@ const os = require('os');
 const readline = require('readline');
 
 const args = process.argv.slice(2);
-const command = args[0];
 const packageRoot = path.resolve(__dirname, '..');
+const flags = { noCache: args.includes('--no-cache') };
+const positionalArgs = args.filter(arg => !arg.startsWith('--'));
+const command = positionalArgs[0];
 
 function showHelp() {
   console.log(`
 🔒 AI Sandbox Wrapper
 
 Usage:
-  npx @kokorolx/ai-sandbox-wrapper <command>
+  npx @kokorolx/ai-sandbox-wrapper <command> [options]
 
 Commands:
   setup     Run interactive setup (configure workspaces, select tools)
   clean     Interactive cleanup for caches/configs
   help      Show this help message
 
+Options:
+  --no-cache    Build Docker images without using cache (fresh build)
+
 Examples:
   npx @kokorolx/ai-sandbox-wrapper setup
+  npx @kokorolx/ai-sandbox-wrapper setup --no-cache
   npx @kokorolx/ai-sandbox-wrapper clean
 
 Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
@@ -45,13 +51,18 @@ function runSetup() {
     /* Windows doesn't support chmod */
   }
 
+  const setupEnv = {
+    ...process.env,
+    AI_SANDBOX_ROOT: packageRoot
+  };
+  if (flags.noCache) {
+    setupEnv.DOCKER_NO_CACHE = '1';
+  }
+
   const child = spawn('bash', [setupScript], {
     cwd: packageRoot,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      AI_SANDBOX_ROOT: packageRoot
-    }
+    env: setupEnv
   });
 
   child.on('error', (err) => {
@@ -152,11 +163,14 @@ function listDirectories(basePath) {
 }
 
 function listGitKeyFiles() {
-  const homeDir = os.homedir();
+  const gitKeysDir = path.join(os.homedir(), '.ai-sandbox', 'git-keys');
   try {
+    if (!pathExists(gitKeysDir)) {
+      return [];
+    }
     return fs
-      .readdirSync(homeDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.startsWith('.ai-git-keys-'))
+      .readdirSync(gitKeysDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
       .sort();
   } catch (err) {
@@ -181,19 +195,19 @@ function buildCategoryOptions() {
   return [
     {
       key: 'caches',
-      label: 'Tool caches (~/.ai-cache/) - Safe to delete'
+      label: 'Tool caches (~/.ai-sandbox/cache/) - Safe to delete'
     },
     {
       key: 'configs',
-      label: 'Tool configs (~/.ai-home/) - Loses settings'
+      label: 'Tool configs (~/.ai-sandbox/home/) - Loses settings'
     },
     {
       key: 'global',
       label: 'Global config files - Loses preferences'
     },
     {
-      key: 'all',
-      label: 'All of the above'
+      key: 'everything',
+      label: 'Everything (~/.ai-sandbox/) - Full reset'
     }
   ];
 }
@@ -216,10 +230,13 @@ function buildToolItems(baseDir, displayPrefix) {
 
 function buildGlobalItems() {
   const homeDir = os.homedir();
+  const sandboxDir = path.join(homeDir, '.ai-sandbox');
+  const gitKeysDir = path.join(sandboxDir, 'git-keys');
+
   const safe = [
     {
       label: '🟢 Safe',
-      items: buildToolItems('~/.ai-cache', '~/.ai-cache')
+      items: buildToolItems('~/.ai-sandbox/cache', '~/.ai-sandbox/cache')
     }
   ];
   const medium = [
@@ -227,25 +244,25 @@ function buildGlobalItems() {
       label: '🟡 Medium',
       items: [
         {
-          name: '.ai-sandbox',
-          path: path.join(homeDir, '.ai-sandbox'),
-          display: '~/.ai-sandbox/',
-          size: getPathSize(path.join(homeDir, '.ai-sandbox'))
+          name: 'config.json',
+          path: path.join(sandboxDir, 'config.json'),
+          display: '~/.ai-sandbox/config.json',
+          size: getPathSize(path.join(sandboxDir, 'config.json'))
         },
         {
-          name: '.ai-git-allowed',
-          path: path.join(homeDir, '.ai-git-allowed'),
-          display: '~/.ai-git-allowed',
-          size: getPathSize(path.join(homeDir, '.ai-git-allowed'))
+          name: 'git-allowed',
+          path: path.join(sandboxDir, 'git-allowed'),
+          display: '~/.ai-sandbox/git-allowed',
+          size: getPathSize(path.join(sandboxDir, 'git-allowed'))
         }
       ]
         .concat(
           listGitKeyFiles().map((file) => {
-            const fullPath = path.join(homeDir, file);
+            const fullPath = path.join(gitKeysDir, file);
             return {
               name: file,
               path: fullPath,
-              display: `~/${file}`,
+              display: `~/.ai-sandbox/git-keys/${file}`,
               size: getPathSize(fullPath)
             };
           })
@@ -258,16 +275,16 @@ function buildGlobalItems() {
       label: '🔴 Critical',
       items: [
         {
-          name: '.ai-workspaces',
-          path: path.join(homeDir, '.ai-workspaces'),
-          display: '~/.ai-workspaces',
-          size: getPathSize(path.join(homeDir, '.ai-workspaces'))
+          name: 'workspaces',
+          path: path.join(sandboxDir, 'workspaces'),
+          display: '~/.ai-sandbox/workspaces',
+          size: getPathSize(path.join(sandboxDir, 'workspaces'))
         },
         {
-          name: '.ai-env',
-          path: path.join(homeDir, '.ai-env'),
-          display: '~/.ai-env',
-          size: getPathSize(path.join(homeDir, '.ai-env'))
+          name: 'env',
+          path: path.join(sandboxDir, 'env'),
+          display: '~/.ai-sandbox/env',
+          size: getPathSize(path.join(sandboxDir, 'env'))
         }
       ].filter((item) => pathExists(item.path))
     }
@@ -443,25 +460,31 @@ function deleteItems(items) {
 
 async function handleCategoryItems(rl, categoryKey) {
   if (categoryKey === 'caches') {
-    const items = buildToolItems('~/.ai-cache', '~/.ai-cache');
-    return promptItemSelection(rl, '📁 Tool Caches (~/.ai-cache/)', items);
+    const items = buildToolItems('~/.ai-sandbox/cache', '~/.ai-sandbox/cache');
+    return promptItemSelection(rl, '📁 Tool Caches (~/.ai-sandbox/cache/)', items);
   }
   if (categoryKey === 'configs') {
-    const items = buildToolItems('~/.ai-home', '~/.ai-home');
-    return promptItemSelection(rl, '⚙️ Tool Configs (~/.ai-home/)', items);
+    const items = buildToolItems('~/.ai-sandbox/home', '~/.ai-sandbox/home');
+    return promptItemSelection(rl, '⚙️ Tool Configs (~/.ai-sandbox/home/)', items);
   }
   if (categoryKey === 'global') {
     const groups = buildGlobalItems();
     return promptGlobalSelection(rl, groups);
   }
-  if (categoryKey === 'all') {
-    const allItems = [];
-    buildToolItems('~/.ai-cache', '~/.ai-cache').forEach((item) => allItems.push(item));
-    buildToolItems('~/.ai-home', '~/.ai-home').forEach((item) => allItems.push(item));
-    buildGlobalItems().forEach((group) => {
-      group.items.forEach((item) => allItems.push(item));
-    });
-    return { action: 'select', items: allItems };
+  if (categoryKey === 'everything') {
+    const homeDir = os.homedir();
+    const sandboxPath = path.join(homeDir, '.ai-sandbox');
+    const sandboxItem = {
+      name: '.ai-sandbox',
+      path: sandboxPath,
+      display: '~/.ai-sandbox/',
+      size: getPathSize(sandboxPath)
+    };
+    if (!pathExists(sandboxPath)) {
+      console.log('\n~/.ai-sandbox/ does not exist. Nothing to delete.');
+      return { action: 'back' };
+    }
+    return { action: 'select', items: [sandboxItem] };
   }
   return { action: 'back' };
 }

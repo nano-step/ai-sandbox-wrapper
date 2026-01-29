@@ -32,9 +32,81 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-WORKSPACES_FILE="$HOME/.ai-workspaces"
+# ============================================================================
+# MIGRATION: Move old .ai-* paths to ~/.ai-sandbox/
+# ============================================================================
+migrate_to_sandbox() {
+  local SANDBOX_DIR="$HOME/.ai-sandbox"
+  local MIGRATED_MARKER="$SANDBOX_DIR/.migrated"
+  
+  # Skip if already migrated
+  [[ -f "$MIGRATED_MARKER" ]] && return 0
+  
+  # Check if any old paths exist
+  local needs_migration=false
+  [[ -d "$HOME/.ai-cache" ]] && needs_migration=true
+  [[ -d "$HOME/.ai-home" ]] && needs_migration=true
+  [[ -f "$HOME/.ai-workspaces" ]] && needs_migration=true
+  [[ -f "$HOME/.ai-env" ]] && needs_migration=true
+  [[ -f "$HOME/.ai-git-allowed" ]] && needs_migration=true
+  
+  # Check for git-keys files
+  for keyfile in "$HOME"/.ai-git-keys-*; do
+    [[ -f "$keyfile" ]] && needs_migration=true && break
+  done
+  
+  [[ "$needs_migration" == "false" ]] && return 0
+  
+  echo "🔄 Migrating AI Sandbox configuration to ~/.ai-sandbox/..."
+  mkdir -p "$SANDBOX_DIR"
+  
+  # Migrate directories
+  if [[ -d "$HOME/.ai-cache" ]]; then
+    mv "$HOME/.ai-cache" "$SANDBOX_DIR/cache" 2>/dev/null && echo "  ✓ Migrated cache"
+  fi
+  if [[ -d "$HOME/.ai-home" ]]; then
+    mv "$HOME/.ai-home" "$SANDBOX_DIR/home" 2>/dev/null && echo "  ✓ Migrated home"
+  fi
+  
+  # Migrate files
+  if [[ -f "$HOME/.ai-workspaces" ]]; then
+    mv "$HOME/.ai-workspaces" "$SANDBOX_DIR/workspaces" 2>/dev/null && echo "  ✓ Migrated workspaces"
+  fi
+  if [[ -f "$HOME/.ai-env" ]]; then
+    mv "$HOME/.ai-env" "$SANDBOX_DIR/env" 2>/dev/null && echo "  ✓ Migrated env"
+  fi
+  if [[ -f "$HOME/.ai-git-allowed" ]]; then
+    mv "$HOME/.ai-git-allowed" "$SANDBOX_DIR/git-allowed" 2>/dev/null && echo "  ✓ Migrated git-allowed"
+  fi
+  
+  # Migrate git-keys (multiple files with pattern .ai-git-keys-*)
+  local git_keys_found=false
+  for keyfile in "$HOME"/.ai-git-keys-*; do
+    [[ -f "$keyfile" ]] || continue
+    git_keys_found=true
+    mkdir -p "$SANDBOX_DIR/git-keys"
+    local basename=$(basename "$keyfile")
+    local newname="${basename#.ai-git-keys-}"
+    mv "$keyfile" "$SANDBOX_DIR/git-keys/$newname" 2>/dev/null
+  done
+  [[ "$git_keys_found" == "true" ]] && echo "  ✓ Migrated git-keys"
+  
+  # Create marker
+  date -Iseconds > "$MIGRATED_MARKER" 2>/dev/null || date > "$MIGRATED_MARKER"
+  echo "✅ Migration complete!"
+}
+
+migrate_to_sandbox
+
+# ============================================================================
+# PATH CONFIGURATION (consolidated under ~/.ai-sandbox/)
+# ============================================================================
+SANDBOX_DIR="$HOME/.ai-sandbox"
+mkdir -p "$SANDBOX_DIR"
+
+WORKSPACES_FILE="$SANDBOX_DIR/workspaces"
 CURRENT_DIR="$(pwd)"
-ENV_FILE="$HOME/.ai-env"
+ENV_FILE="$SANDBOX_DIR/env"
 
 # Check if workspaces file exists
 if [[ ! -f "$WORKSPACES_FILE" ]]; then
@@ -89,8 +161,8 @@ else
   IMAGE="ai-${TOOL}:latest"
 fi
 
-CACHE_DIR="$HOME/.ai-cache/$TOOL"
-HOME_DIR="$HOME/.ai-home/$TOOL"
+CACHE_DIR="$SANDBOX_DIR/cache/$TOOL"
+HOME_DIR="$SANDBOX_DIR/home/$TOOL"
 
 mkdir -p "$CACHE_DIR" "$HOME_DIR"
 
@@ -100,63 +172,75 @@ while IFS= read -r ws; do
   VOLUME_MOUNTS="$VOLUME_MOUNTS -v $ws:$ws:delegated"
 done < "$WORKSPACES_FILE"
 
-# Tool-specific config mounts (project-level takes precedence over global)
+# Tool-specific config migration and setup
+# All tool configs now live in HOME_DIR (~/.ai-sandbox/home/$TOOL/)
+# which is mounted as /home/agent in the container
+
+copy_tool_config() {
+  local src="$1"
+  local dest="$2"
+  if [[ -e "$src" && ! -e "$dest" ]]; then
+    mkdir -p "$(dirname "$dest")"
+    cp -r "$src" "$dest" 2>/dev/null && echo "  ✓ Copied $src → $dest"
+  fi
+}
+
+case "$TOOL" in
+  amp)
+    copy_tool_config "$HOME/.config/amp" "$HOME_DIR/.config/amp"
+    copy_tool_config "$HOME/.local/share/amp" "$HOME_DIR/.local/share/amp"
+    ;;
+  opencode)
+    copy_tool_config "$HOME/.config/opencode" "$HOME_DIR/.config/opencode"
+    ;;
+  claude)
+    copy_tool_config "$HOME/.claude" "$HOME_DIR/.claude"
+    ;;
+  droid)
+    copy_tool_config "$HOME/.config/droid" "$HOME_DIR/.config/droid"
+    ;;
+  qoder)
+    copy_tool_config "$HOME/.config/qoder" "$HOME_DIR/.config/qoder"
+    ;;
+  auggie)
+    copy_tool_config "$HOME/.config/auggie" "$HOME_DIR/.config/auggie"
+    ;;
+  codebuddy)
+    copy_tool_config "$HOME/.config/codebuddy" "$HOME_DIR/.config/codebuddy"
+    ;;
+  jules)
+    copy_tool_config "$HOME/.config/jules" "$HOME_DIR/.config/jules"
+    ;;
+  shai)
+    copy_tool_config "$HOME/.config/shai" "$HOME_DIR/.config/shai"
+    ;;
+  gemini)
+    copy_tool_config "$HOME/.config/gemini" "$HOME_DIR/.config/gemini"
+    ;;
+  aider)
+    copy_tool_config "$HOME/.config/aider" "$HOME_DIR/.config/aider"
+    copy_tool_config "$HOME/.aider" "$HOME_DIR/.aider"
+    ;;
+  kilo)
+    copy_tool_config "$HOME/.config/kilo" "$HOME_DIR/.config/kilo"
+    ;;
+  codex)
+    copy_tool_config "$HOME/.config/codex" "$HOME_DIR/.config/codex"
+    ;;
+  qwen)
+    copy_tool_config "$HOME/.config/qwen" "$HOME_DIR/.config/qwen"
+    ;;
+esac
+
+# Ensure required directories exist in HOME_DIR
+mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.cache"
+
+# Project-level config mount (if exists)
 CONFIG_MOUNT=""
 PROJECT_CONFIG="$CURRENT_DIR/.$TOOL.json"
 
 if [[ -f "$PROJECT_CONFIG" ]]; then
-  # Use project-level config if it exists
   CONFIG_MOUNT="-v $PROJECT_CONFIG:$CURRENT_DIR/.$TOOL.json:delegated"
-else
-  # Use global configs based on tool
-  case "$TOOL" in
-    amp)
-      CONFIG_DIR="$HOME/.config/amp"
-      DATA_DIR="$HOME/.local/share/amp"
-      mkdir -p "$CONFIG_DIR" "$DATA_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/amp:delegated -v $DATA_DIR:/home/agent/.local/share/amp:delegated"
-      ;;
-    opencode)
-      CONFIG_DIR="$HOME/.config/opencode"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/opencode:delegated"
-      ;;
-    claude)
-      CONFIG_DIR="$HOME/.claude"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.claude:delegated"
-      ;;
-    droid)
-      CONFIG_DIR="$HOME/.config/droid"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/droid:delegated"
-      ;;
-    qoder)
-      CONFIG_DIR="$HOME/.config/qoder"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/qoder:delegated"
-      ;;
-    auggie)
-      CONFIG_DIR="$HOME/.config/auggie"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/auggie:delegated"
-      ;;
-    codebuddy)
-      CONFIG_DIR="$HOME/.config/codebuddy"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/codebuddy:delegated"
-      ;;
-    jules)
-      CONFIG_DIR="$HOME/.config/jules"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/jules:delegated"
-      ;;
-    shai)
-      CONFIG_DIR="$HOME/.config/shai"
-      mkdir -p "$CONFIG_DIR"
-      CONFIG_MOUNT="-v $CONFIG_DIR:/home/agent/.config/shai:delegated"
-      ;;
-  esac
 fi
 
 # ============================================================================
@@ -567,16 +651,16 @@ fi
 
 # Git access control (opt-in per workspace)
 GIT_MOUNTS=""
-GIT_ALLOWED_FILE="$HOME/.ai-git-allowed"
-GIT_CACHE_DIR="$HOME/.ai-cache/git"
-touch "$GIT_ALLOWED_FILE"
+GIT_ALLOWED_FILE="$SANDBOX_DIR/git-allowed"
+GIT_CACHE_DIR="$SANDBOX_DIR/cache/git"
+touch "$GIT_ALLOWED_FILE" 2>/dev/null || true
 
 # Check if Git access is allowed for this workspace
 if grep -q "^$CURRENT_DIR$" "$GIT_ALLOWED_FILE" 2>/dev/null; then
   # Previously allowed for this workspace
   # Check if saved keys exist for this workspace
   WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-  SAVED_KEYS_FILE="$HOME/.ai-git-keys-$WORKSPACE_MD5"
+  SAVED_KEYS_FILE="$SANDBOX_DIR/git-keys/$WORKSPACE_MD5"
 
   if [ -f "$SAVED_KEYS_FILE" ]; then
     # Use previously saved key selection
@@ -760,7 +844,8 @@ else
               echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
               # Save selected keys (one per line for easier parsing)
               WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$HOME/.ai-git-keys-$WORKSPACE_MD5"
+              mkdir -p "$SANDBOX_DIR/git-keys"
+              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$SANDBOX_DIR/git-keys/$WORKSPACE_MD5"
               echo "✅ Git access enabled and saved for: $CURRENT_DIR"
             else
               echo "✅ Git access enabled for this session"

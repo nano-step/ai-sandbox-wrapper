@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
+for arg in "$@"; do
+  case "$arg" in
+    --no-cache) export DOCKER_NO_CACHE=1 ;;
+  esac
+done
+
 # Interactive multi-select menu
 # Usage: multi_select "title" "comma,separated,options" "comma,separated,descriptions"
 # Returns: SELECTED_ITEMS as an array
@@ -165,7 +171,11 @@ fi
 
 echo "🚀 AI Sandbox Setup (Docker Desktop + Node 22 LTS)"
 
-WORKSPACES_FILE="$HOME/.ai-workspaces"
+# Consolidated config directory
+SANDBOX_DIR="$HOME/.ai-sandbox"
+mkdir -p "$SANDBOX_DIR"
+
+WORKSPACES_FILE="$SANDBOX_DIR/workspaces"
 
 # Handle whitelisted workspaces
 WORKSPACES=()
@@ -290,7 +300,7 @@ mkdir -p "$WORKSPACE"
 mkdir -p "$HOME/bin"
 
 # Secrets
-ENV_FILE="$HOME/.ai-env"
+ENV_FILE="$SANDBOX_DIR/env"
 if [ ! -f "$ENV_FILE" ]; then
   cat <<EOF > "$ENV_FILE"
 OPENAI_API_KEY=[REDACTED:api-key]

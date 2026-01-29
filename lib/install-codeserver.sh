@@ -9,8 +9,8 @@ echo "Installing $TOOL (code-server - browser-based VSCode)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-cache/$TOOL"
-mkdir -p "$HOME/.ai-home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
 
 WORKSPACES_FILE="$HOME/.ai-workspaces"
 
@@ -58,7 +58,7 @@ EOF
 
 # Build image
 echo "Building Docker image for $TOOL..."
-docker build -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
+docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
 
 # Create wrapper script
 cat <<'EOF' > "$HOME/bin/codeserver-run"

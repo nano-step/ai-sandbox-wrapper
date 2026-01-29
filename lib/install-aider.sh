@@ -8,8 +8,8 @@ echo "Installing $TOOL (Python-based AI pair programmer)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-cache/$TOOL"
-mkdir -p "$HOME/.ai-home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
 
 # Create Dockerfile (extends base image which has Python)
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
@@ -22,7 +22,7 @@ EOF
 
 # Build image
 echo "Building Docker image for $TOOL..."
-docker build -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
+docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
 
 echo "✅ $TOOL installed"
 echo ""

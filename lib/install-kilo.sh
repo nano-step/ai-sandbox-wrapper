@@ -9,8 +9,8 @@ echo "Installing $TOOL (Kilo Code CLI)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-cache/$TOOL"
-mkdir -p "$HOME/.ai-home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
 
 # Create Dockerfile - use Node.js for this tool due to Bun compatibility issue
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
@@ -43,7 +43,7 @@ EOF
 
 # Build image
 echo "Building Docker image for $TOOL..."
-docker build -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
+docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
 
 echo "✅ $TOOL installed"
 echo ""
