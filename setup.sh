@@ -229,8 +229,7 @@ if [[ -n "$WORKSPACE_INPUT" ]]; then
 fi
 
 if [[ ${#WORKSPACES[@]} -eq 0 ]]; then
-  echo "❌ No valid workspaces provided"
-  exit 1
+  echo "ℹ️  No workspaces whitelisted yet. You can whitelist folders on-demand when running tools."
 fi
 
 # Save workspaces to legacy config file (for backward compatibility)
@@ -275,8 +274,8 @@ echo "📁 Legacy workspaces file: $WORKSPACES_FILE"
 WORKSPACE="${WORKSPACES[0]}"
 
 # Tool definitions
-TOOL_OPTIONS="amp,opencode,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai,vscode,codeserver"
-TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent,VSCode Desktop in Docker (X11),VSCode in browser (fast)"
+TOOL_OPTIONS="amp,opencode,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
+TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
 
 # Interactive multi-select
 multi_select "Select AI Tools to Install" "$TOOL_OPTIONS" "$TOOL_DESCS"
@@ -350,14 +349,11 @@ else
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-# Install base image if any containerized tools selected (vscode doesn't need it)
+# Install base image if any containerized tools or additional tools selected
 NEEDS_BASE_IMAGE=0
-for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" =~ ^(amp|opencode|claude|aider)$ ]]; then
-    NEEDS_BASE_IMAGE=1
-    break
-  fi
-done
+if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 || ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
+  NEEDS_BASE_IMAGE=1
+fi
 
 if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_SPEC_KIT=0
@@ -435,12 +431,6 @@ for tool in "${TOOLS[@]}"; do
     shai)
       bash "$SCRIPT_DIR/lib/install-shai.sh"
       ;;
-    vscode)
-      bash "$SCRIPT_DIR/lib/install-vscode.sh"
-      ;;
-    codeserver)
-      bash "$SCRIPT_DIR/lib/install-codeserver.sh"
-      ;;
   esac
 done
 
@@ -459,35 +449,18 @@ fi
 
 # Add aliases for each tool (only if not already present)
 for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" == "vscode" ]]; then
-    if ! grep -q "alias vscode=" "$SHELL_RC" 2>/dev/null; then
-      echo "alias vscode='vscode-run'" >> "$SHELL_RC"
-    fi
-  elif [[ "$tool" == "codeserver" ]]; then
-    if ! grep -q "alias codeserver=" "$SHELL_RC" 2>/dev/null; then
-      echo "alias codeserver='codeserver-run'" >> "$SHELL_RC"
-    fi
-  else
-    if ! grep -q "alias $tool=" "$SHELL_RC" 2>/dev/null; then
-      echo "alias $tool=\"ai-run $tool\"" >> "$SHELL_RC"
-    fi
+  if ! grep -q "alias $tool=" "$SHELL_RC" 2>/dev/null; then
+    echo "alias $tool=\"ai-run $tool\"" >> "$SHELL_RC"
   fi
 done
 
 # Additional tools don't need host aliases (only in containers)
 
-echo ""
 echo "✅ Setup complete!"
 echo ""
 echo "🛠️  Installed AI tools:"
 for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" == "vscode" ]]; then
-    echo "  vscode-run (or: vscode) - Desktop VSCode via X11"
-  elif [[ "$tool" == "codeserver" ]]; then
-    echo "  codeserver-run (or: codeserver) - Browser VSCode at localhost:8080"
-  else
-    echo "  ai-run $tool (or: $tool)"
-  fi
+  echo "  ai-run $tool (or: $tool)"
 done
 
 if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
@@ -523,8 +496,5 @@ echo "   List folders:  cat $WORKSPACES_FILE"
 echo ""
 echo "📁 Per-project configs supported:"
 for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" =~ ^(vscode|codeserver)$ ]]; then
-    continue
-  fi
   echo "  .$tool.json (overrides global config in $HOME/.config/$tool or $HOME/.$tool)"
 done

@@ -216,22 +216,79 @@ add_workspace() {
   fi
 }
 
-# Check if workspaces are configured (config.json or legacy file)
-if ! has_jq && [[ ! -f "$WORKSPACES_FILE" ]]; then
-  echo "❌ Workspaces not configured. Run setup.sh first."
-  exit 1
-fi
-
-if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
-  ws_count=$(jq '.workspaces | length' "$AI_SANDBOX_CONFIG" 2>/dev/null)
-  if [[ "$ws_count" == "0" ]] && [[ ! -f "$WORKSPACES_FILE" ]]; then
-    echo "❌ Workspaces not configured. Run setup.sh first."
-    exit 1
+# Migrate legacy workspaces and git-allowed files to config.json
+migrate_legacy_to_config() {
+  if ! has_jq; then
+    return 0  # Can't migrate without jq
   fi
-elif [[ ! -f "$WORKSPACES_FILE" ]]; then
-  echo "❌ Workspaces not configured. Run setup.sh first."
-  exit 1
-fi
+
+  local LEGACY_WORKSPACES="$SANDBOX_DIR/workspaces"
+  local LEGACY_GIT_ALLOWED="$SANDBOX_DIR/git-allowed"
+
+  # Migrate workspaces file
+  if [[ -f "$LEGACY_WORKSPACES" ]]; then
+    local ws_array="[]"
+    while IFS= read -r ws; do
+      [[ -n "$ws" ]] && ws_array=$(echo "$ws_array" | jq --arg w "$ws" '. + [$w]')
+    done < "$LEGACY_WORKSPACES"
+
+    jq --argjson ws "$ws_array" '.workspaces = $ws' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+    chmod 600 "$AI_SANDBOX_CONFIG"
+  fi
+
+  # Migrate git-allowed file
+  if [[ -f "$LEGACY_GIT_ALLOWED" ]]; then
+    local git_array="[]"
+    while IFS= read -r ws; do
+      [[ -n "$ws" ]] && git_array=$(echo "$git_array" | jq --arg w "$ws" '. + [$w]')
+    done < "$LEGACY_GIT_ALLOWED"
+
+    jq --argjson gw "$git_array" '.git.allowedWorkspaces = $gw' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+    chmod 600 "$AI_SANDBOX_CONFIG"
+  fi
+}
+
+# Upgrade v1 config to v2 schema
+upgrade_config_to_v2() {
+  if ! has_jq; then
+    return 0
+  fi
+
+  # Add missing v2 fields while preserving existing networks
+  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}})' \
+    "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+  chmod 600 "$AI_SANDBOX_CONFIG"
+
+  # Migrate legacy files after upgrade
+  migrate_legacy_to_config
+}
+
+# Initialize config file if it doesn't exist or upgrade to v2
+init_config() {
+  mkdir -p "$(dirname "$AI_SANDBOX_CONFIG")"
+
+  if [[ ! -f "$AI_SANDBOX_CONFIG" ]]; then
+    # Create new v2 config
+    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
+    echo "$initial_config" > "$AI_SANDBOX_CONFIG"
+    chmod 600 "$AI_SANDBOX_CONFIG"
+
+    # Migrate legacy files if they exist
+    migrate_legacy_to_config
+  elif has_jq; then
+    # Check version and upgrade if needed
+    local version=$(jq -r '.version // 1' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    if [[ "$version" == "1" ]]; then
+      upgrade_config_to_v2
+    fi
+  fi
+}
+
+# Initialize config and migrate legacy data
+init_config
 
 # Check if current directory is inside any whitelisted workspace
 ALLOWED=false
@@ -377,76 +434,7 @@ fi
 
 # Note: AI_SANDBOX_CONFIG and has_jq() defined earlier in PATH CONFIGURATION
 
-# Initialize config file if it doesn't exist or upgrade to v2
-init_config() {
-  mkdir -p "$(dirname "$AI_SANDBOX_CONFIG")"
-
-  if [[ ! -f "$AI_SANDBOX_CONFIG" ]]; then
-    # Create new v2 config
-    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
-    echo "$initial_config" > "$AI_SANDBOX_CONFIG"
-    chmod 600 "$AI_SANDBOX_CONFIG"
-
-    # Migrate legacy files if they exist
-    migrate_legacy_to_config
-  elif has_jq; then
-    # Check version and upgrade if needed
-    local version=$(jq -r '.version // 1' "$AI_SANDBOX_CONFIG" 2>/dev/null)
-    if [[ "$version" == "1" ]]; then
-      upgrade_config_to_v2
-    fi
-  fi
-}
-
-# Migrate legacy workspaces and git-allowed files to config.json
-migrate_legacy_to_config() {
-  if ! has_jq; then
-    return 0  # Can't migrate without jq
-  fi
-
-  local LEGACY_WORKSPACES="$SANDBOX_DIR/workspaces"
-  local LEGACY_GIT_ALLOWED="$SANDBOX_DIR/git-allowed"
-
-  # Migrate workspaces file
-  if [[ -f "$LEGACY_WORKSPACES" ]]; then
-    local ws_array="[]"
-    while IFS= read -r ws; do
-      [[ -n "$ws" ]] && ws_array=$(echo "$ws_array" | jq --arg w "$ws" '. + [$w]')
-    done < "$LEGACY_WORKSPACES"
-
-    jq --argjson ws "$ws_array" '.workspaces = $ws' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
-      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
-    chmod 600 "$AI_SANDBOX_CONFIG"
-  fi
-
-  # Migrate git-allowed file
-  if [[ -f "$LEGACY_GIT_ALLOWED" ]]; then
-    local git_array="[]"
-    while IFS= read -r ws; do
-      [[ -n "$ws" ]] && git_array=$(echo "$git_array" | jq --arg w "$ws" '. + [$w]')
-    done < "$LEGACY_GIT_ALLOWED"
-
-    jq --argjson gw "$git_array" '.git.allowedWorkspaces = $gw' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
-      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
-    chmod 600 "$AI_SANDBOX_CONFIG"
-  fi
-}
-
-# Upgrade v1 config to v2 schema
-upgrade_config_to_v2() {
-  if ! has_jq; then
-    return 0
-  fi
-
-  # Add missing v2 fields while preserving existing networks
-  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}})' \
-    "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
-    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
-  chmod 600 "$AI_SANDBOX_CONFIG"
-
-  # Migrate legacy files after upgrade
-  migrate_legacy_to_config
-}
+# Note: init_config, migrate_legacy_to_config, upgrade_config_to_v2 moved to PATH CONFIGURATION section
 
 # Read networks for current workspace (workspace > global > empty)
 read_network_config() {

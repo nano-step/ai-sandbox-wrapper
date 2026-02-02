@@ -23,7 +23,8 @@ Commands:
   setup                 Run interactive setup (configure workspaces, select tools)
   update                Interactive menu to manage config (workspaces, git, networks)
   clean                 Interactive cleanup for caches/configs
-  config show [--json]  Display current configuration
+  config show [--json]         Display current global configuration
+  config tool <tool> [--show]  Display host paths and config for a specific tool
 
   workspace list        List all whitelisted workspaces
   workspace add <path>  Add a workspace to whitelist
@@ -49,6 +50,8 @@ Examples:
   npx @kokorolx/ai-sandbox-wrapper setup
   npx @kokorolx/ai-sandbox-wrapper update
   npx @kokorolx/ai-sandbox-wrapper config show --json
+  npx @kokorolx/ai-sandbox-wrapper config tool claude
+  npx @kokorolx/ai-sandbox-wrapper config tool opencode --show
   npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/myapp
   npx @kokorolx/ai-sandbox-wrapper git enable ~/projects/myrepo
   npx @kokorolx/ai-sandbox-wrapper network add mynetwork --global
@@ -291,6 +294,87 @@ function runConfigShow(jsonOutput) {
   }
   if (globalNetworks.length === 0 && wsKeys.length === 0) {
     console.log('  (none configured)');
+  }
+  console.log('');
+}
+
+// ============================================================================
+// CONFIG TOOL COMMAND
+// ============================================================================
+const TOOL_CONFIG_MAP = {
+  'claude': ['.claude.json'],
+  'opencode': ['.opencode.json', 'auth.json', '.gitconfig'],
+  'gemini': ['.gemini.json'],
+  'aider': ['.aider.conf', '.aider.conf.yml'],
+  'amp': [
+    '.amp.json',
+    'secrets.json',
+    '.config/amp/settings.json',
+    '.local/share/amp/secrets.json'
+  ],
+  'kilo': ['.kilo.json'],
+  'codex': ['.codex.json'],
+  'qwen': ['.qwen.json']
+};
+
+async function runConfigTool(toolName, showContent) {
+  if (!toolName) {
+    console.error('❌ Please provide a tool name');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper config tool <tool> [--show]');
+    process.exit(1);
+  }
+
+  const toolHome = path.join(SANDBOX_DIR, 'tools', toolName, 'home');
+  console.log(`\n🔍 Sandbox Configuration for: ${toolName}`);
+  console.log(`Host Home:  ${toolHome}`);
+
+  if (!fs.existsSync(toolHome)) {
+    console.log('Status:     ⚠️  Not yet initialized (folder missing on host)');
+    return;
+  }
+
+  const possibleConfigs = TOOL_CONFIG_MAP[toolName] || [];
+  let foundConfig = null;
+
+  // Search current directory first (higher priority in ai-run)
+  for (const cfg of possibleConfigs) {
+    const localPath = path.join(process.cwd(), cfg);
+    if (fs.existsSync(localPath)) {
+      foundConfig = localPath;
+      console.log(`Config:     ✅ Found in current directory: ${foundConfig}`);
+      break;
+    }
+  }
+
+  // Then search sandbox home
+  if (!foundConfig) {
+    for (const cfg of possibleConfigs) {
+      const sandboxPath = path.join(toolHome, cfg);
+      if (fs.existsSync(sandboxPath)) {
+        foundConfig = sandboxPath;
+        console.log(`Config:     ✅ Found in sandbox home: ${foundConfig}`);
+        break;
+      }
+    }
+  }
+
+  if (!foundConfig) {
+    if (possibleConfigs.length > 0) {
+      console.log(`Config:     ❌ Not found (searched for: ${possibleConfigs.join(', ')})`);
+    } else {
+      console.log('Config:     ℹ️  No common config filename matches known for this tool');
+    }
+  } else if (showContent) {
+    try {
+      const content = fs.readFileSync(foundConfig, 'utf8');
+      console.log('\n--- Content ---\n');
+      console.log(content);
+      console.log('\n---------------\n');
+    } catch (err) {
+      console.error(`❌ Error reading config: ${err.message}`);
+    }
+  } else {
+    console.log(`\nTo view content, run: npx @kokorolx/ai-sandbox-wrapper config tool ${toolName} --show`);
   }
   console.log('');
 }
@@ -1112,6 +1196,7 @@ const hasGlobalFlag = args.includes('--global');
 const workspaceIdx = args.indexOf('--workspace');
 const workspaceArg = workspaceIdx !== -1 ? args[workspaceIdx + 1] : null;
 const hasJsonFlag = args.includes('--json');
+const hasShowFlag = args.includes('--show');
 
 switch (command) {
   case 'setup':
@@ -1140,8 +1225,12 @@ switch (command) {
   case 'config':
     if (subCommand === 'show') {
       runConfigShow(hasJsonFlag);
+    } else if (subCommand === 'tool') {
+      runConfigTool(subArg, hasShowFlag);
     } else {
-      console.error('Usage: npx @kokorolx/ai-sandbox-wrapper config show [--json]');
+      console.error('Usage:');
+      console.error('  npx @kokorolx/ai-sandbox-wrapper config show [--json]');
+      console.error('  npx @kokorolx/ai-sandbox-wrapper config tool <tool> [--show]');
       process.exit(1);
     }
     break;

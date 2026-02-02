@@ -34,38 +34,17 @@ RUN npm install -g typescript typescript-language-server
 RUN node --version && npm --version && pnpm --version && bun --version && tsc --version
 
 # Install additional tools (if selected)
-RUN pipx install specify-cli --pip-args="git+https://github.com/github/spec-kit.git"
-RUN bun install -g uipro-cli
-RUN mkdir -p /usr/local/lib/openspec && \
-    cd /usr/local/lib/openspec && \
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install specify-cli --pip-args="git+https://github.com/github/spec-kit.git" && \
+    chmod +x /usr/local/bin/specify && \
+    ln -sf /usr/local/bin/specify /usr/local/bin/specify-cli
+RUN mkdir -p /usr/local/lib/uipro-cli && \
+    cd /usr/local/lib/uipro-cli && \
     bun init -y && \
-    bun add @fission-ai/openspec && \
-    ln -sf /usr/local/lib/openspec/node_modules/.bin/openspec /usr/local/bin/openspec
-# Install Playwright system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 \
-    libnspr4 \
-    libnss3 \
-    libdbus-1-3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libxcb1 \
-    libxkbcommon0 \
-    libatspi2.0-0 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libcairo2 \
-    libpango-1.0-0 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
-# Install Playwright and browsers via npm (avoids pnpm global bin issues)
-RUN npm install -g playwright && npx playwright install
+    bun add uipro-cli && \
+    ln -sf /usr/local/lib/uipro-cli/node_modules/.bin/uipro /usr/local/bin/uipro && \
+    ln -sf /usr/local/bin/uipro /usr/local/bin/uipro-cli && \
+    chmod -R 755 /usr/local/lib/uipro-cli && \
+    chmod +x /usr/local/bin/uipro
 
 # Create workspace
 WORKDIR /workspace

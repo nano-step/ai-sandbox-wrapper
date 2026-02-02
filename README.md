@@ -100,7 +100,7 @@ npx @kokorolx/ai-sandbox-wrapper setup --no-cache
 ```
 
 ### Step 3: Follow the Interactive Prompts
-1. **Whitelist workspaces** - Enter the directories where you want AI tools to access (e.g., `~/projects,~/code`)
+1. **Whitelist workspaces (Optional)** - Enter directories AI tools can access, or just hit **Enter** to whitelist on-demand later.
 2. **Select tools** - Use arrow keys to move, space to select, Enter to confirm
 3. **Choose image source** - Select registry (faster) or build locally
 
@@ -219,14 +219,28 @@ docker pull registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-aider:latest
 | **qwen** | ✅ | npm/Bun | Alibaba Qwen CLI (1M context) |
 | **droid** | ✅ | Custom | Factory CLI |
 
-### GUI Tools (IDE/Editor)
+> **Note:** GUI tools (VSCode, codeserver) have been removed in v2.0.1. Use your native IDE with AI tools running in the sandbox.
 
-| Tool | Status | Description |
-|------|--------|-------------|
-| **codeserver** | ✅ | VSCode in browser (localhost:8080) |
-| **vscode** | ⚠️ Experimental | VSCode Desktop via X11 |
-| **cursor** | 🔜 Planned | Cursor IDE sandbox |
-| **antigravity** | 🔜 Planned | Antigravity IDE sandbox |
+## ⚠️ Known Issues
+
+### Native Tool Config Compatibility
+
+Not all tools have been fully tested with the v2 folder structure. If you encounter issues with a specific tool's configuration not being recognized:
+
+1. **Check if config exists on host:** `ls ~/.config/<tool>/` or `ls ~/.<tool>/`
+2. **Check if config was copied to sandbox:** `ls ~/.ai-sandbox/tools/<tool>/home/`
+3. **Manual copy if needed:** `cp -r ~/.config/<tool> ~/.ai-sandbox/tools/<tool>/home/.config/`
+
+**Known working tools:**
+- ✅ `claude` - Full config sync
+- ✅ `opencode` - Config + auth.json sync
+- ✅ `amp` - Config + secrets sync
+- ✅ `gemini` - Config sync
+
+**Needs verification:**
+- ⚠️ `aider`, `kilo`, `codex`, `qwen`, `droid`, `qoder`, `auggie`, `codebuddy`, `jules`, `shai`
+
+Please [open an issue](https://github.com/kokorolx/ai-sandbox-wrapper/issues) if you encounter problems with specific tools.
 
 ## 🖥️ Platform Support
 
@@ -282,6 +296,18 @@ AI Sandbox Wrapper creates and manages a single consolidated directory in your h
 | `~/.ai-sandbox/git-allowed` | Legacy git-allowed file (fallback) |
 
 ## ⚙️ Configuration
+
+### Tool-Specific Configuration
+
+Each tool has its own persistent home directory inside `~/.ai-sandbox/tools/<tool>/home/`.
+
+```bash
+# View configuration paths for a specific tool (Recommended)
+npx @kokorolx/ai-sandbox-wrapper config tool claude
+
+# View configuration content
+npx @kokorolx/ai-sandbox-wrapper config tool claude --show
+```
 
 ### API Keys
 ```bash
@@ -640,9 +666,9 @@ nano ~/.ai-sandbox/git-allowed  # Delete the line
 - Reload your shell: `source ~/.zshrc`
 - Verify setup completed: check if `~/bin/ai-run` exists
 
-**"Workspaces not configured"**
-- Run setup again: `./setup.sh`
-- Make sure you entered workspace directories during setup
+**"Workspaces not configured"** (Legacy)
+- Note: This error is mostly resolved in v2.1.0+.
+- Run setup again: `./setup.sh` or simply run an AI tool in your project folder to trigger interactive whitelisting.
 
 **Tool doesn't start**
 - Check if you selected the tool during setup

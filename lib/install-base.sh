@@ -8,13 +8,22 @@ ADDITIONAL_TOOLS_INSTALL=""
 
 if [[ "${INSTALL_SPEC_KIT:-0}" -eq 1 ]]; then
   echo "📦 spec-kit will be installed in base image"
-  ADDITIONAL_TOOLS_INSTALL+='RUN pipx install specify-cli --pip-args="git+https://github.com/github/spec-kit.git"
+  ADDITIONAL_TOOLS_INSTALL+='RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install specify-cli --pip-args="git+https://github.com/github/spec-kit.git" && \
+    chmod +x /usr/local/bin/specify && \
+    ln -sf /usr/local/bin/specify /usr/local/bin/specify-cli
 '
 fi
 
 if [[ "${INSTALL_UX_UI_PROMAX:-0}" -eq 1 ]]; then
   echo "📦 ux-ui-promax will be installed in base image"
-  ADDITIONAL_TOOLS_INSTALL+='RUN bun install -g uipro-cli
+  ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /usr/local/lib/uipro-cli && \
+    cd /usr/local/lib/uipro-cli && \
+    bun init -y && \
+    bun add uipro-cli && \
+    ln -sf /usr/local/lib/uipro-cli/node_modules/.bin/uipro /usr/local/bin/uipro && \
+    ln -sf /usr/local/bin/uipro /usr/local/bin/uipro-cli && \
+    chmod -R 755 /usr/local/lib/uipro-cli && \
+    chmod +x /usr/local/bin/uipro
 '
 fi
 
@@ -24,7 +33,9 @@ if [[ "${INSTALL_OPENSPEC:-0}" -eq 1 ]]; then
     cd /usr/local/lib/openspec && \
     bun init -y && \
     bun add @fission-ai/openspec && \
-    ln -sf /usr/local/lib/openspec/node_modules/.bin/openspec /usr/local/bin/openspec
+    ln -sf /usr/local/lib/openspec/node_modules/.bin/openspec /usr/local/bin/openspec && \
+    chmod -R 755 /usr/local/lib/openspec && \
+    chmod +x /usr/local/bin/openspec
 '
 fi
 
@@ -102,6 +113,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     curl \\
     ssh \\
     ca-certificates \\
+    jq \\
     python3 \\
     python3-pip \\
     python3-venv \\
