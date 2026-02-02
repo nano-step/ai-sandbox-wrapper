@@ -45,6 +45,13 @@ RUN mkdir -p /usr/local/lib/uipro-cli && \
     ln -sf /usr/local/bin/uipro /usr/local/bin/uipro-cli && \
     chmod -R 755 /usr/local/lib/uipro-cli && \
     chmod +x /usr/local/bin/uipro
+RUN mkdir -p /usr/local/lib/openspec && \
+    cd /usr/local/lib/openspec && \
+    bun init -y && \
+    bun add @fission-ai/openspec && \
+    ln -sf /usr/local/lib/openspec/node_modules/.bin/openspec /usr/local/bin/openspec && \
+    chmod -R 755 /usr/local/lib/openspec && \
+    chmod +x /usr/local/bin/openspec
 
 # Create workspace
 WORKDIR /workspace

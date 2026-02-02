@@ -8,8 +8,8 @@ echo "Installing $TOOL (Google Gemini CLI)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
-mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home/.cache"
+mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 
 # Create Dockerfile (extends base image for faster builds)
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"

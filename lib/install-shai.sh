@@ -8,8 +8,8 @@ echo "Installing $TOOL (OVHcloud SHAI)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
-mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home/.cache"
+mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 
 # Create Dockerfile
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"

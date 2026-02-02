@@ -138,7 +138,7 @@ migrate_to_v2() {
     rmdir "$SANDBOX_DIR/home" 2>/dev/null || true
   fi
 
-  # Migrate per-tool cache directories: cache/<tool>/ → tools/<tool>/cache/
+  # Migrate per-tool cache directories: cache/<tool>/ → tools/<tool>/home/.cache/
   # But skip cache/git - that goes to shared/git
   if [[ -d "$SANDBOX_DIR/cache" ]]; then
     for tool_cache in "$SANDBOX_DIR/cache"/*/; do
@@ -146,10 +146,10 @@ migrate_to_v2() {
       local tool_name=$(basename "$tool_cache")
       # Skip git - handled separately
       [[ "$tool_name" == "git" ]] && continue
-      local new_path="$SANDBOX_DIR/tools/$tool_name/cache"
+      local new_path="$SANDBOX_DIR/tools/$tool_name/home/.cache"
       if [[ ! -d "$new_path" ]]; then
-        mkdir -p "$SANDBOX_DIR/tools/$tool_name"
-        mv "$tool_cache" "$new_path" 2>/dev/null && echo "  ✓ Migrated cache/$tool_name → tools/$tool_name/cache"
+        mkdir -p "$(dirname "$new_path")"
+        mv "$tool_cache" "$new_path" 2>/dev/null && echo "  ✓ Migrated cache/$tool_name → tools/$tool_name/home/.cache"
       fi
     done
   fi
@@ -339,11 +339,10 @@ else
 fi
 
 # V2 tool-centric paths
-CACHE_DIR="$SANDBOX_DIR/tools/$TOOL/cache"
 HOME_DIR="$SANDBOX_DIR/tools/$TOOL/home"
 GIT_SHARED_DIR="$SANDBOX_DIR/shared/git"
 
-mkdir -p "$CACHE_DIR" "$HOME_DIR" "$GIT_SHARED_DIR"
+mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
 
 # Build volume mounts for all whitelisted workspaces
 VOLUME_MOUNTS=""
@@ -1186,6 +1185,11 @@ if [[ -n "$TTY_FLAGS" ]]; then
   TERMINAL_SIZE="-e COLUMNS=$TERM_COLS -e LINES=$TERM_LINES"
 fi
 
+# Ensure sandbox directories are writable on host before mounting
+# This helps with UID/GID mapping issues in Docker Desktop
+mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
+chmod -R u+w "$HOME_DIR" "$GIT_SHARED_DIR" 2>/dev/null || true
+
 docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   --init \
   --platform "$PLATFORM" \
@@ -1196,7 +1200,6 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $NETWORK_OPTIONS \
   $HOST_ACCESS_ARGS \
   $PORT_MAPPINGS \
-  -v "$CACHE_DIR":/home/agent/.cache \
   -v "$HOME_DIR":/home/agent \
   -w "$CURRENT_DIR" \
   --env-file "$ENV_FILE" \

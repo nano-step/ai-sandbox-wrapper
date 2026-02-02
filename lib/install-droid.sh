@@ -5,8 +5,8 @@ echo "Installing droid (Factory CLI)..."
 
 # Create directories
 mkdir -p "dockerfiles/droid"
-mkdir -p "$HOME/.ai-sandbox/cache/droid"
-mkdir -p "$HOME/.ai-sandbox/home/droid"
+mkdir -p "$HOME/.ai-sandbox/tools/droid/home/.cache"
+mkdir -p "$HOME/.ai-sandbox/tools/droid/home"
 
 # Create Dockerfile with curl install
 cat <<'EOF' > "dockerfiles/droid/Dockerfile"

@@ -9,8 +9,8 @@ echo "Installing $TOOL (Kilo Code CLI)..."
 
 # Create directories
 mkdir -p "dockerfiles/$TOOL"
-mkdir -p "$HOME/.ai-sandbox/cache/$TOOL"
-mkdir -p "$HOME/.ai-sandbox/home/$TOOL"
+mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home/.cache"
+mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 
 # Create Dockerfile - use Node.js for this tool due to Bun compatibility issue
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"

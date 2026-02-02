@@ -456,6 +456,12 @@ done
 
 # Additional tools don't need host aliases (only in containers)
 
+# Verify permissions
+if [[ ! -w "$SANDBOX_DIR" ]]; then
+  echo "⚠️  WARNING: $SANDBOX_DIR is not writable. Attempting to fix permissions..."
+  chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+fi
+
 echo "✅ Setup complete!"
 echo ""
 echo "🛠️  Installed AI tools:"
