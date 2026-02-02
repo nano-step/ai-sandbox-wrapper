@@ -10,30 +10,44 @@ AI coding tools like Claude, Gemini, and Aider have full access to your filesyst
 
 *Last updated: Wednesday, January 29, 2026*
 
-## ⚠️ Breaking Change: v2.0.0 - Config Directory Consolidation
+## ⚠️ Breaking Change: v2.0.0 - Config Directory Reorganization
 
-**Version 2.0.0** consolidates all configuration from multiple directories into a single `~/.ai-sandbox/` directory.
+**Version 2.0.0** reorganizes the directory structure to a tool-centric layout and introduces a unified `config.json`.
 
-**Automatic Migration:** When you run any AI tool, the wrapper automatically migrates your existing configuration:
+### New Structure (v2)
+```
+~/.ai-sandbox/
+├── config.json         # Unified config (workspaces, git, networks)
+├── tools/              # Tool-centric organization
+│   ├── claude/
+│   │   ├── home/       # Tool config (was: ~/.ai-sandbox/home/claude/)
+│   │   └── cache/      # Tool cache (was: ~/.ai-sandbox/cache/claude/)
+│   ├── gemini/
+│   │   ├── home/
+│   │   └── cache/
+│   └── ... (other tools)
+└── shared/
+    └── git/            # Shared git config
+        ├── ssh/        # SSH keys and config
+        └── keys/       # Per-workspace key selections
+```
 
-**Global configs:**
-- `~/.ai-cache/` → `~/.ai-sandbox/cache/`
-- `~/.ai-home/` → `~/.ai-sandbox/home/`
-- `~/.ai-workspaces` → `~/.ai-sandbox/workspaces`
-- `~/.ai-env` → `~/.ai-sandbox/env`
-- `~/.ai-git-allowed` → `~/.ai-sandbox/git-allowed`
-- `~/.ai-git-keys-*` → `~/.ai-sandbox/git-keys/`
+### Automatic Migration
 
-**Tool-specific configs (copied per-tool on first run):**
-- `~/.config/amp/` → `~/.ai-sandbox/home/amp/.config/amp/`
-- `~/.local/share/amp/` → `~/.ai-sandbox/home/amp/.local/share/amp/`
-- `~/.claude/` → `~/.ai-sandbox/home/claude/.claude/`
-- `~/.config/opencode/` → `~/.ai-sandbox/home/opencode/.config/opencode/`
-- (and similar for other tools)
+When you run any AI tool, the wrapper automatically migrates:
 
-**No action required** - migration happens automatically on first run. A `.migrated` marker file prevents re-migration of global configs.
+| Old Location | New Location |
+|--------------|-------------|
+| `~/.ai-sandbox/home/<tool>/` | `~/.ai-sandbox/tools/<tool>/home/` |
+| `~/.ai-sandbox/cache/<tool>/` | `~/.ai-sandbox/tools/<tool>/cache/` |
+| `~/.ai-sandbox/cache/git/` | `~/.ai-sandbox/shared/git/` |
+| `~/.ai-sandbox/git-keys/` | `~/.ai-sandbox/shared/git/keys/` |
+| `~/.ai-sandbox/workspaces` (file) | `config.json.workspaces` |
+| `~/.ai-sandbox/git-allowed` (file) | `config.json.git.allowedWorkspaces` |
 
-**Note:** Tool configs are **copied** (not moved), so your native tools continue to work with their original configs. The sandbox gets its own copy.
+**No action required** - migration happens automatically on first run.
+
+**Legacy file compatibility**: Old files (`workspaces`, `git-allowed`) are still read as fallback.
 
 ## 🛡️ Why Use This?
 
@@ -262,11 +276,10 @@ AI Sandbox Wrapper creates and manages a single consolidated directory in your h
 
 | File | Purpose |
 |------|---------|
+| `~/.ai-sandbox/config.json` | Unified config (workspaces, git access, networks) |
 | `~/.ai-sandbox/env` | API keys (format: `KEY=value`, one per line) |
-| `~/.ai-sandbox/workspaces` | Whitelisted directories AI can access |
-| `~/.ai-sandbox/git-allowed` | Workspaces with persistent Git access (one path per line) |
-| `~/.ai-sandbox/git-keys/*` | Saved SSH key selections for each workspace (md5-hashed) |
-| `~/.ai-sandbox/config.json` | Network configuration |
+| `~/.ai-sandbox/workspaces` | Legacy workspace file (fallback) |
+| `~/.ai-sandbox/git-allowed` | Legacy git-allowed file (fallback) |
 
 ## ⚙️ Configuration
 
@@ -278,11 +291,28 @@ nano ~/.ai-sandbox/env
 
 ### Workspace Management
 ```bash
-# Add workspace
-echo '/path/to/project' >> ~/.ai-sandbox/workspaces
+# CLI commands (recommended)
+npx @kokorolx/ai-sandbox-wrapper workspace list
+npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/my-new-app
+npx @kokorolx/ai-sandbox-wrapper workspace remove ~/old-project
 
-# List workspaces
+# Interactive menu
+npx @kokorolx/ai-sandbox-wrapper update
+
+# Legacy (still works)
+echo '/path/to/project' >> ~/.ai-sandbox/workspaces
 cat ~/.ai-sandbox/workspaces
+```
+
+### Git Access Management
+```bash
+# CLI commands
+npx @kokorolx/ai-sandbox-wrapper git status
+npx @kokorolx/ai-sandbox-wrapper git enable ~/projects/myrepo
+npx @kokorolx/ai-sandbox-wrapper git disable ~/projects/myrepo
+
+# Interactive menu
+npx @kokorolx/ai-sandbox-wrapper update
 ```
 
 ### Network Configuration
@@ -307,12 +337,24 @@ Network selections are saved to `~/.ai-sandbox/config.json`:
 - **Global**: Default for all workspaces
 
 ```bash
-# View current config
-cat ~/.ai-sandbox/config.json
+# CLI commands
+npx @kokorolx/ai-sandbox-wrapper network list
+npx @kokorolx/ai-sandbox-wrapper network add mynetwork --global
+npx @kokorolx/ai-sandbox-wrapper network add dev-network --workspace ~/projects/myapp
+npx @kokorolx/ai-sandbox-wrapper network remove mynetwork --global
 
-# Example config structure
+# View current config
+npx @kokorolx/ai-sandbox-wrapper config show
+npx @kokorolx/ai-sandbox-wrapper config show --json
+
+# Example config.json structure (v2)
 {
-  "version": 1,
+  "version": 2,
+  "workspaces": ["/Users/you/projects/my-app"],
+  "git": {
+    "allowedWorkspaces": ["/Users/you/projects/my-repo"],
+    "keySelections": {}
+  },
   "networks": {
     "global": ["shared-services"],
     "workspaces": {

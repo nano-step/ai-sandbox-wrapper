@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ssh \
     ca-certificates \
+    jq \
     python3 \
     python3-pip \
     python3-venv \
@@ -33,6 +34,7 @@ RUN npm install -g typescript typescript-language-server
 RUN node --version && npm --version && pnpm --version && bun --version && tsc --version
 
 # Install additional tools (if selected)
+RUN pipx install specify-cli --pip-args="git+https://github.com/github/spec-kit.git"
 RUN bun install -g uipro-cli
 RUN mkdir -p /usr/local/lib/openspec && \
     cd /usr/local/lib/openspec && \
@@ -64,36 +66,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 # Install Playwright and browsers via npm (avoids pnpm global bin issues)
 RUN npm install -g playwright && npx playwright install
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl-dev \
-    libreadline-dev \
-    zlib1g-dev \
-    libyaml-dev \
-    libffi-dev \
-    libgdbm-dev \
-    libncurses5-dev \
-    libpq-dev \
-    default-libmysqlclient-dev \
-    libsqlite3-dev \
-    imagemagick \
-    libmagickwand-dev \
-    libvips-dev \
-    autoconf \
-    bison \
-    rustc \
-    libxml2-dev \
-    libxslt1-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone https://github.com/rbenv/rbenv.git /usr/local/rbenv && \
-    git clone https://github.com/rbenv/ruby-build.git /usr/local/rbenv/plugins/ruby-build
-
-ENV RBENV_ROOT=/usr/local/rbenv
-ENV PATH=$RBENV_ROOT/bin:$RBENV_ROOT/shims:$PATH
-
-RUN rbenv install 3.3.0 && rbenv global 3.3.0 && rbenv rehash
-
-RUN gem install rails -v 8.0.2 && gem install bundler && rbenv rehash
 
 # Create workspace
 WORKDIR /workspace

@@ -233,10 +233,43 @@ if [[ ${#WORKSPACES[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# Save workspaces to config file
+# Save workspaces to legacy config file (for backward compatibility)
 printf "%s\n" "${WORKSPACES[@]}" > "$WORKSPACES_FILE"
 chmod 600 "$WORKSPACES_FILE"
-echo "📁 Whitelisted workspaces saved to: $WORKSPACES_FILE"
+
+# Generate v2 config.json
+CONFIG_JSON="$SANDBOX_DIR/config.json"
+if command -v jq &>/dev/null; then
+  # Build workspaces JSON array
+  WS_JSON="[]"
+  for ws in "${WORKSPACES[@]}"; do
+    WS_JSON=$(echo "$WS_JSON" | jq --arg w "$ws" '. + [$w]')
+  done
+
+  if [[ -f "$CONFIG_JSON" ]]; then
+    # Merge with existing config (preserve networks, git settings)
+    jq --argjson ws "$WS_JSON" '.version = 2 | .workspaces = $ws | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}}) | .networks = (.networks // {"global":[],"workspaces":{}})' "$CONFIG_JSON" > "$CONFIG_JSON.tmp" \
+      && mv "$CONFIG_JSON.tmp" "$CONFIG_JSON"
+  else
+    # Create new v2 config
+    echo "{\"version\":2,\"workspaces\":$WS_JSON,\"git\":{\"allowedWorkspaces\":[],\"keySelections\":{}},\"networks\":{\"global\":[],\"workspaces\":{}}}" | jq . > "$CONFIG_JSON"
+  fi
+  chmod 600 "$CONFIG_JSON"
+  echo "📁 Configuration saved to: $CONFIG_JSON"
+else
+  # No jq - create basic config
+  WS_JSON="["
+  first=true
+  for ws in "${WORKSPACES[@]}"; do
+    if $first; then first=false; else WS_JSON="$WS_JSON,"; fi
+    WS_JSON="$WS_JSON\"$ws\""
+  done
+  WS_JSON="$WS_JSON]"
+  echo "{\"version\":2,\"workspaces\":$WS_JSON,\"git\":{\"allowedWorkspaces\":[],\"keySelections\":{}},\"networks\":{\"global\":[],\"workspaces\":{}}}" > "$CONFIG_JSON"
+  chmod 600 "$CONFIG_JSON"
+  echo "📁 Configuration saved to: $CONFIG_JSON"
+fi
+echo "📁 Legacy workspaces file: $WORKSPACES_FILE"
 
 # Use first workspace as default for backwards compatibility
 WORKSPACE="${WORKSPACES[0]}"
@@ -332,7 +365,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_OPENSPEC=0
   INSTALL_PLAYWRIGHT=0
   INSTALL_RUBY=0
-  
+
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
     case "$addon" in
       spec-kit)
@@ -352,7 +385,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
         ;;
     esac
   done
-  
+
   export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY
   bash "$SCRIPT_DIR/lib/install-base.sh"
 fi

@@ -20,17 +20,38 @@ Usage:
   npx @kokorolx/ai-sandbox-wrapper <command> [options]
 
 Commands:
-  setup     Run interactive setup (configure workspaces, select tools)
-  clean     Interactive cleanup for caches/configs
-  help      Show this help message
+  setup                 Run interactive setup (configure workspaces, select tools)
+  update                Interactive menu to manage config (workspaces, git, networks)
+  clean                 Interactive cleanup for caches/configs
+  config show [--json]  Display current configuration
+
+  workspace list        List all whitelisted workspaces
+  workspace add <path>  Add a workspace to whitelist
+  workspace remove <path>  Remove a workspace from whitelist
+
+  git status            Show git-enabled workspaces
+  git enable <path>     Enable git access for a workspace
+  git disable <path>    Disable git access for a workspace
+
+  network list          List configured networks
+  network add <name> [--global|--workspace <path>]  Add a network
+  network remove <name> [--global|--workspace <path>]  Remove a network
+
+  help                  Show this help message
 
 Options:
   --no-cache    Build Docker images without using cache (fresh build)
+  --json        Output in JSON format (for config show)
+  --global      Apply to global scope (for network commands)
+  --workspace   Apply to specific workspace (for network commands)
 
 Examples:
   npx @kokorolx/ai-sandbox-wrapper setup
-  npx @kokorolx/ai-sandbox-wrapper setup --no-cache
-  npx @kokorolx/ai-sandbox-wrapper clean
+  npx @kokorolx/ai-sandbox-wrapper update
+  npx @kokorolx/ai-sandbox-wrapper config show --json
+  npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/myapp
+  npx @kokorolx/ai-sandbox-wrapper git enable ~/projects/myrepo
+  npx @kokorolx/ai-sandbox-wrapper network add mynetwork --global
 
 Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
 `);
@@ -38,7 +59,7 @@ Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
 
 function runSetup() {
   const setupScript = path.join(packageRoot, 'setup.sh');
-  
+
   if (!fs.existsSync(setupScript)) {
     console.error('❌ Error: setup.sh not found at', setupScript);
     console.error('This may indicate a corrupted installation.');
@@ -88,7 +109,51 @@ function expandHome(inputPath) {
   if (inputPath.startsWith('~')) {
     return path.join(os.homedir(), inputPath.slice(1));
   }
-  return inputPath;
+  return path.resolve(inputPath);
+}
+
+// ============================================================================
+// CONFIG FILE UTILITIES
+// ============================================================================
+const SANDBOX_DIR = path.join(os.homedir(), '.ai-sandbox');
+const CONFIG_PATH = path.join(SANDBOX_DIR, 'config.json');
+const LEGACY_WORKSPACES_PATH = path.join(SANDBOX_DIR, 'workspaces');
+const LEGACY_GIT_ALLOWED_PATH = path.join(SANDBOX_DIR, 'git-allowed');
+
+function readConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    }
+  } catch (err) {}
+  // Return default v2 config
+  return {
+    version: 2,
+    workspaces: [],
+    git: { allowedWorkspaces: [], keySelections: {} },
+    networks: { global: [], workspaces: {} }
+  };
+}
+
+function writeConfig(config) {
+  fs.mkdirSync(SANDBOX_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  fs.chmodSync(CONFIG_PATH, '600');
+}
+
+function readLegacyFile(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf8').split('\n').filter(Boolean);
+    }
+  } catch (err) {}
+  return [];
+}
+
+function writeLegacyFile(filePath, items) {
+  fs.mkdirSync(SANDBOX_DIR, { recursive: true });
+  fs.writeFileSync(filePath, items.join('\n') + '\n');
+  fs.chmodSync(filePath, '600');
 }
 
 function pathExists(targetPath) {
@@ -163,18 +228,338 @@ function listDirectories(basePath) {
 }
 
 function listGitKeyFiles() {
-  const gitKeysDir = path.join(os.homedir(), '.ai-sandbox', 'git-keys');
+  // V2 path: shared/git/keys
+  const gitKeysDir = path.join(os.homedir(), '.ai-sandbox', 'shared', 'git', 'keys');
+  // Fallback to legacy path
+  const legacyDir = path.join(os.homedir(), '.ai-sandbox', 'git-keys');
+  const targetDir = fs.existsSync(gitKeysDir) ? gitKeysDir : legacyDir;
   try {
-    if (!pathExists(gitKeysDir)) {
+    if (!pathExists(targetDir)) {
       return [];
     }
     return fs
-      .readdirSync(gitKeysDir, { withFileTypes: true })
+      .readdirSync(targetDir, { withFileTypes: true })
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
       .sort();
   } catch (err) {
     return [];
+  }
+}
+
+// ============================================================================
+// CONFIG SHOW COMMAND
+// ============================================================================
+function runConfigShow(jsonOutput) {
+  const config = readConfig();
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(config, null, 2));
+    return;
+  }
+
+  console.log('\n📋 AI Sandbox Configuration\n');
+  console.log(`Version: ${config.version || 1}`);
+  console.log(`Config file: ${CONFIG_PATH}`);
+
+  console.log('\n📁 Workspaces:');
+  const workspaces = config.workspaces || [];
+  if (workspaces.length === 0) {
+    console.log('  (none configured)');
+  } else {
+    workspaces.forEach(ws => console.log(`  - ${ws}`));
+  }
+
+  console.log('\n🔐 Git Access:');
+  const gitAllowed = config.git?.allowedWorkspaces || [];
+  if (gitAllowed.length === 0) {
+    console.log('  (no workspaces with git access)');
+  } else {
+    gitAllowed.forEach(ws => console.log(`  - ${ws}`));
+  }
+
+  console.log('\n🌐 Networks:');
+  const globalNetworks = config.networks?.global || [];
+  const wsNetworks = config.networks?.workspaces || {};
+  if (globalNetworks.length > 0) {
+    console.log('  Global:', globalNetworks.join(', '));
+  }
+  const wsKeys = Object.keys(wsNetworks).filter(k => wsNetworks[k]?.length > 0);
+  if (wsKeys.length > 0) {
+    console.log('  Per-workspace:');
+    wsKeys.forEach(ws => console.log(`    ${ws}: ${wsNetworks[ws].join(', ')}`));
+  }
+  if (globalNetworks.length === 0 && wsKeys.length === 0) {
+    console.log('  (none configured)');
+  }
+  console.log('');
+}
+
+// ============================================================================
+// WORKSPACE COMMANDS
+// ============================================================================
+function runWorkspaceList() {
+  const config = readConfig();
+  const workspaces = config.workspaces || [];
+
+  console.log('\n📁 Whitelisted Workspaces:\n');
+  if (workspaces.length === 0) {
+    console.log('  (none configured)');
+    console.log('\n  Add a workspace: npx @kokorolx/ai-sandbox-wrapper workspace add <path>');
+  } else {
+    workspaces.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
+  }
+  console.log('');
+}
+
+function runWorkspaceAdd(inputPath) {
+  if (!inputPath) {
+    console.error('❌ Please provide a workspace path');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper workspace add <path>');
+    process.exit(1);
+  }
+
+  const expandedPath = expandHome(inputPath);
+  const config = readConfig();
+
+  if (!config.workspaces) config.workspaces = [];
+
+  if (config.workspaces.includes(expandedPath)) {
+    console.log(`ℹ️  Workspace already exists: ${expandedPath}`);
+    return;
+  }
+
+  config.workspaces.push(expandedPath);
+  writeConfig(config);
+
+  // Also update legacy file
+  const legacyWs = readLegacyFile(LEGACY_WORKSPACES_PATH);
+  if (!legacyWs.includes(expandedPath)) {
+    legacyWs.push(expandedPath);
+    writeLegacyFile(LEGACY_WORKSPACES_PATH, legacyWs);
+  }
+
+  console.log(`✅ Added workspace: ${expandedPath}`);
+}
+
+function runWorkspaceRemove(inputPath) {
+  if (!inputPath) {
+    console.error('❌ Please provide a workspace path');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper workspace remove <path>');
+    process.exit(1);
+  }
+
+  const expandedPath = expandHome(inputPath);
+  const config = readConfig();
+
+  if (!config.workspaces) config.workspaces = [];
+  const idx = config.workspaces.indexOf(expandedPath);
+
+  if (idx === -1) {
+    console.log(`ℹ️  Workspace not found: ${expandedPath}`);
+    return;
+  }
+
+  config.workspaces.splice(idx, 1);
+  writeConfig(config);
+
+  // Also update legacy file
+  const legacyWs = readLegacyFile(LEGACY_WORKSPACES_PATH);
+  const legacyIdx = legacyWs.indexOf(expandedPath);
+  if (legacyIdx !== -1) {
+    legacyWs.splice(legacyIdx, 1);
+    writeLegacyFile(LEGACY_WORKSPACES_PATH, legacyWs);
+  }
+
+  console.log(`✅ Removed workspace: ${expandedPath}`);
+}
+
+// ============================================================================
+// GIT COMMANDS
+// ============================================================================
+function runGitStatus() {
+  const config = readConfig();
+  const allowed = config.git?.allowedWorkspaces || [];
+
+  console.log('\n🔐 Git-Enabled Workspaces:\n');
+  if (allowed.length === 0) {
+    console.log('  (no workspaces with git access)');
+    console.log('\n  Enable git: npx @kokorolx/ai-sandbox-wrapper git enable <workspace-path>');
+  } else {
+    allowed.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
+  }
+  console.log('');
+}
+
+function runGitEnable(inputPath) {
+  if (!inputPath) {
+    console.error('❌ Please provide a workspace path');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git enable <path>');
+    process.exit(1);
+  }
+
+  const expandedPath = expandHome(inputPath);
+  const config = readConfig();
+
+  if (!config.git) config.git = { allowedWorkspaces: [], keySelections: {} };
+  if (!config.git.allowedWorkspaces) config.git.allowedWorkspaces = [];
+
+  if (config.git.allowedWorkspaces.includes(expandedPath)) {
+    console.log(`ℹ️  Git access already enabled for: ${expandedPath}`);
+    return;
+  }
+
+  config.git.allowedWorkspaces.push(expandedPath);
+  writeConfig(config);
+
+  // Also update legacy file
+  const legacyGit = readLegacyFile(LEGACY_GIT_ALLOWED_PATH);
+  if (!legacyGit.includes(expandedPath)) {
+    legacyGit.push(expandedPath);
+    writeLegacyFile(LEGACY_GIT_ALLOWED_PATH, legacyGit);
+  }
+
+  console.log(`✅ Enabled git access for: ${expandedPath}`);
+}
+
+function runGitDisable(inputPath) {
+  if (!inputPath) {
+    console.error('❌ Please provide a workspace path');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git disable <path>');
+    process.exit(1);
+  }
+
+  const expandedPath = expandHome(inputPath);
+  const config = readConfig();
+
+  if (!config.git?.allowedWorkspaces) {
+    console.log(`ℹ️  Git access not enabled for: ${expandedPath}`);
+    return;
+  }
+
+  const idx = config.git.allowedWorkspaces.indexOf(expandedPath);
+  if (idx === -1) {
+    console.log(`ℹ️  Git access not enabled for: ${expandedPath}`);
+    return;
+  }
+
+  config.git.allowedWorkspaces.splice(idx, 1);
+  writeConfig(config);
+
+  // Also update legacy file
+  const legacyGit = readLegacyFile(LEGACY_GIT_ALLOWED_PATH);
+  const legacyIdx = legacyGit.indexOf(expandedPath);
+  if (legacyIdx !== -1) {
+    legacyGit.splice(legacyIdx, 1);
+    writeLegacyFile(LEGACY_GIT_ALLOWED_PATH, legacyGit);
+  }
+
+  console.log(`✅ Disabled git access for: ${expandedPath}`);
+}
+
+// ============================================================================
+// NETWORK COMMANDS
+// ============================================================================
+function runNetworkList() {
+  const config = readConfig();
+  const globalNetworks = config.networks?.global || [];
+  const wsNetworks = config.networks?.workspaces || {};
+
+  console.log('\n🌐 Configured Networks:\n');
+
+  console.log('Global networks:');
+  if (globalNetworks.length === 0) {
+    console.log('  (none)');
+  } else {
+    globalNetworks.forEach(n => console.log(`  - ${n}`));
+  }
+
+  console.log('\nPer-workspace networks:');
+  const wsKeys = Object.keys(wsNetworks).filter(k => wsNetworks[k]?.length > 0);
+  if (wsKeys.length === 0) {
+    console.log('  (none)');
+  } else {
+    wsKeys.forEach(ws => {
+      console.log(`  ${ws}:`);
+      wsNetworks[ws].forEach(n => console.log(`    - ${n}`));
+    });
+  }
+  console.log('');
+}
+
+function runNetworkAdd(name, isGlobal, workspacePath) {
+  if (!name) {
+    console.error('❌ Please provide a network name');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper network add <name> [--global|--workspace <path>]');
+    process.exit(1);
+  }
+
+  const config = readConfig();
+  if (!config.networks) config.networks = { global: [], workspaces: {} };
+
+  if (isGlobal || !workspacePath) {
+    if (!config.networks.global) config.networks.global = [];
+    if (config.networks.global.includes(name)) {
+      console.log(`ℹ️  Network already in global scope: ${name}`);
+      return;
+    }
+    config.networks.global.push(name);
+    writeConfig(config);
+    console.log(`✅ Added network to global scope: ${name}`);
+  } else {
+    const expandedPath = expandHome(workspacePath);
+    if (!config.networks.workspaces) config.networks.workspaces = {};
+    if (!config.networks.workspaces[expandedPath]) config.networks.workspaces[expandedPath] = [];
+    if (config.networks.workspaces[expandedPath].includes(name)) {
+      console.log(`ℹ️  Network already configured for workspace: ${name}`);
+      return;
+    }
+    config.networks.workspaces[expandedPath].push(name);
+    writeConfig(config);
+    console.log(`✅ Added network ${name} to workspace: ${expandedPath}`);
+  }
+}
+
+function runNetworkRemove(name, isGlobal, workspacePath) {
+  if (!name) {
+    console.error('❌ Please provide a network name');
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper network remove <name> [--global|--workspace <path>]');
+    process.exit(1);
+  }
+
+  const config = readConfig();
+  if (!config.networks) {
+    console.log(`ℹ️  Network not found: ${name}`);
+    return;
+  }
+
+  if (isGlobal || !workspacePath) {
+    if (!config.networks.global) {
+      console.log(`ℹ️  Network not found in global scope: ${name}`);
+      return;
+    }
+    const idx = config.networks.global.indexOf(name);
+    if (idx === -1) {
+      console.log(`ℹ️  Network not found in global scope: ${name}`);
+      return;
+    }
+    config.networks.global.splice(idx, 1);
+    writeConfig(config);
+    console.log(`✅ Removed network from global scope: ${name}`);
+  } else {
+    const expandedPath = expandHome(workspacePath);
+    if (!config.networks.workspaces?.[expandedPath]) {
+      console.log(`ℹ️  Network not found for workspace: ${name}`);
+      return;
+    }
+    const idx = config.networks.workspaces[expandedPath].indexOf(name);
+    if (idx === -1) {
+      console.log(`ℹ️  Network not found for workspace: ${name}`);
+      return;
+    }
+    config.networks.workspaces[expandedPath].splice(idx, 1);
+    writeConfig(config);
+    console.log(`✅ Removed network ${name} from workspace: ${expandedPath}`);
   }
 }
 
@@ -534,6 +919,200 @@ async function runClean() {
   }
 }
 
+// ============================================================================
+// TUI UPDATE COMMAND
+// ============================================================================
+async function runUpdate() {
+  const rl = createInterface();
+
+  const mainMenu = [
+    { key: 'workspaces', label: '📁 Manage Workspaces' },
+    { key: 'git', label: '🔐 Manage Git Access' },
+    { key: 'networks', label: '🌐 Manage Networks' },
+    { key: 'view', label: '📋 View Current Config' },
+    { key: 'quit', label: '🚪 Exit' }
+  ];
+
+  try {
+    let running = true;
+    while (running) {
+      console.log('\n🛠️  AI Sandbox Configuration Manager\n');
+      mainMenu.forEach((item, i) => console.log(`  ${i + 1}. ${item.label}`));
+
+      const answer = await askQuestion(rl, '\nSelect option (1-5): ');
+      const choice = parseInt(answer, 10);
+
+      if (isNaN(choice) || choice < 1 || choice > 5) {
+        console.log('❌ Invalid selection');
+        continue;
+      }
+
+      const selected = mainMenu[choice - 1];
+
+      switch (selected.key) {
+        case 'workspaces':
+          await manageWorkspacesMenu(rl);
+          break;
+        case 'git':
+          await manageGitMenu(rl);
+          break;
+        case 'networks':
+          await manageNetworksMenu(rl);
+          break;
+        case 'view':
+          runConfigShow(false);
+          break;
+        case 'quit':
+          running = false;
+          break;
+      }
+    }
+    console.log('\n👋 Goodbye!\n');
+  } finally {
+    rl.close();
+  }
+}
+
+async function manageWorkspacesMenu(rl) {
+  const config = readConfig();
+  const workspaces = config.workspaces || [];
+
+  console.log('\n📁 Manage Workspaces\n');
+  console.log('Current workspaces:');
+  if (workspaces.length === 0) {
+    console.log('  (none)');
+  } else {
+    workspaces.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
+  }
+  console.log('');
+  console.log('  a) Add workspace');
+  console.log('  r) Remove workspace');
+  console.log('  b) Back');
+
+  const choice = await askQuestion(rl, '\nSelect action: ');
+
+  switch (choice.toLowerCase()) {
+    case 'a':
+      const addPath = await askQuestion(rl, 'Enter workspace path: ');
+      if (addPath) runWorkspaceAdd(addPath);
+      break;
+    case 'r':
+      if (workspaces.length === 0) {
+        console.log('ℹ️  No workspaces to remove');
+      } else {
+        const idx = await askQuestion(rl, 'Enter number to remove: ');
+        const num = parseInt(idx, 10);
+        if (num >= 1 && num <= workspaces.length) {
+          runWorkspaceRemove(workspaces[num - 1]);
+        } else {
+          console.log('❌ Invalid selection');
+        }
+      }
+      break;
+  }
+}
+
+async function manageGitMenu(rl) {
+  const config = readConfig();
+  const allowed = config.git?.allowedWorkspaces || [];
+  const workspaces = config.workspaces || [];
+
+  console.log('\n🔐 Manage Git Access\n');
+  console.log('Git-enabled workspaces:');
+  if (allowed.length === 0) {
+    console.log('  (none)');
+  } else {
+    allowed.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
+  }
+  console.log('');
+  console.log('  e) Enable git for a workspace');
+  console.log('  d) Disable git for a workspace');
+  console.log('  b) Back');
+
+  const choice = await askQuestion(rl, '\nSelect action: ');
+
+  switch (choice.toLowerCase()) {
+    case 'e':
+      // Show available workspaces not yet git-enabled
+      const available = workspaces.filter(ws => !allowed.includes(ws));
+      if (available.length === 0) {
+        const path = await askQuestion(rl, 'Enter workspace path: ');
+        if (path) runGitEnable(path);
+      } else {
+        console.log('\nAvailable workspaces:');
+        available.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
+        const idx = await askQuestion(rl, 'Enter number or path: ');
+        const num = parseInt(idx, 10);
+        if (num >= 1 && num <= available.length) {
+          runGitEnable(available[num - 1]);
+        } else if (idx) {
+          runGitEnable(idx);
+        }
+      }
+      break;
+    case 'd':
+      if (allowed.length === 0) {
+        console.log('ℹ️  No workspaces with git access');
+      } else {
+        const idx = await askQuestion(rl, 'Enter number to disable: ');
+        const num = parseInt(idx, 10);
+        if (num >= 1 && num <= allowed.length) {
+          runGitDisable(allowed[num - 1]);
+        } else {
+          console.log('❌ Invalid selection');
+        }
+      }
+      break;
+  }
+}
+
+async function manageNetworksMenu(rl) {
+  const config = readConfig();
+  const globalNetworks = config.networks?.global || [];
+
+  console.log('\n🌐 Manage Networks\n');
+  console.log('Global networks:');
+  if (globalNetworks.length === 0) {
+    console.log('  (none)');
+  } else {
+    globalNetworks.forEach((n, i) => console.log(`  ${i + 1}. ${n}`));
+  }
+  console.log('');
+  console.log('  a) Add global network');
+  console.log('  r) Remove global network');
+  console.log('  b) Back');
+
+  const choice = await askQuestion(rl, '\nSelect action: ');
+
+  switch (choice.toLowerCase()) {
+    case 'a':
+      const name = await askQuestion(rl, 'Enter network name: ');
+      if (name) runNetworkAdd(name, true, null);
+      break;
+    case 'r':
+      if (globalNetworks.length === 0) {
+        console.log('ℹ️  No networks to remove');
+      } else {
+        const idx = await askQuestion(rl, 'Enter number to remove: ');
+        const num = parseInt(idx, 10);
+        if (num >= 1 && num <= globalNetworks.length) {
+          runNetworkRemove(globalNetworks[num - 1], true, null);
+        } else {
+          console.log('❌ Invalid selection');
+        }
+      }
+      break;
+  }
+}
+
+// Parse subcommand and options
+const subCommand = positionalArgs[1];
+const subArg = positionalArgs[2];
+const hasGlobalFlag = args.includes('--global');
+const workspaceIdx = args.indexOf('--workspace');
+const workspaceArg = workspaceIdx !== -1 ? args[workspaceIdx + 1] : null;
+const hasJsonFlag = args.includes('--json');
+
 switch (command) {
   case 'setup':
   case undefined:
@@ -544,12 +1123,75 @@ switch (command) {
   case '-h':
     showHelp();
     break;
+  case 'update':
+    runUpdate().catch((err) => {
+      const message = err && err.message ? err.message : String(err);
+      console.error('❌ Update failed:', message);
+      process.exit(1);
+    });
+    break;
   case 'clean':
     runClean().catch((err) => {
       const message = err && err.message ? err.message : String(err);
       console.error('❌ Cleanup failed:', message);
       process.exit(1);
     });
+    break;
+  case 'config':
+    if (subCommand === 'show') {
+      runConfigShow(hasJsonFlag);
+    } else {
+      console.error('Usage: npx @kokorolx/ai-sandbox-wrapper config show [--json]');
+      process.exit(1);
+    }
+    break;
+  case 'workspace':
+    switch (subCommand) {
+      case 'list':
+        runWorkspaceList();
+        break;
+      case 'add':
+        runWorkspaceAdd(subArg);
+        break;
+      case 'remove':
+        runWorkspaceRemove(subArg);
+        break;
+      default:
+        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper workspace <list|add|remove> [path]');
+        process.exit(1);
+    }
+    break;
+  case 'git':
+    switch (subCommand) {
+      case 'status':
+        runGitStatus();
+        break;
+      case 'enable':
+        runGitEnable(subArg);
+        break;
+      case 'disable':
+        runGitDisable(subArg);
+        break;
+      default:
+        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git <status|enable|disable> [path]');
+        process.exit(1);
+    }
+    break;
+  case 'network':
+    switch (subCommand) {
+      case 'list':
+        runNetworkList();
+        break;
+      case 'add':
+        runNetworkAdd(subArg, hasGlobalFlag, workspaceArg);
+        break;
+      case 'remove':
+        runNetworkRemove(subArg, hasGlobalFlag, workspaceArg);
+        break;
+      default:
+        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper network <list|add|remove> [name] [--global|--workspace <path>]');
+        process.exit(1);
+    }
     break;
   default:
     console.error(`❌ Unknown command: ${command}`);

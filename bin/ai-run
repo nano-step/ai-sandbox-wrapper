@@ -33,15 +33,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ============================================================================
-# MIGRATION: Move old .ai-* paths to ~/.ai-sandbox/
+# MIGRATION V1: Move old .ai-* paths to ~/.ai-sandbox/
 # ============================================================================
 migrate_to_sandbox() {
   local SANDBOX_DIR="$HOME/.ai-sandbox"
   local MIGRATED_MARKER="$SANDBOX_DIR/.migrated"
-  
+
   # Skip if already migrated
   [[ -f "$MIGRATED_MARKER" ]] && return 0
-  
+
   # Check if any old paths exist
   local needs_migration=false
   [[ -d "$HOME/.ai-cache" ]] && needs_migration=true
@@ -49,17 +49,17 @@ migrate_to_sandbox() {
   [[ -f "$HOME/.ai-workspaces" ]] && needs_migration=true
   [[ -f "$HOME/.ai-env" ]] && needs_migration=true
   [[ -f "$HOME/.ai-git-allowed" ]] && needs_migration=true
-  
+
   # Check for git-keys files
   for keyfile in "$HOME"/.ai-git-keys-*; do
     [[ -f "$keyfile" ]] && needs_migration=true && break
   done
-  
+
   [[ "$needs_migration" == "false" ]] && return 0
-  
+
   echo "🔄 Migrating AI Sandbox configuration to ~/.ai-sandbox/..."
   mkdir -p "$SANDBOX_DIR"
-  
+
   # Migrate directories
   if [[ -d "$HOME/.ai-cache" ]]; then
     mv "$HOME/.ai-cache" "$SANDBOX_DIR/cache" 2>/dev/null && echo "  ✓ Migrated cache"
@@ -67,7 +67,7 @@ migrate_to_sandbox() {
   if [[ -d "$HOME/.ai-home" ]]; then
     mv "$HOME/.ai-home" "$SANDBOX_DIR/home" 2>/dev/null && echo "  ✓ Migrated home"
   fi
-  
+
   # Migrate files
   if [[ -f "$HOME/.ai-workspaces" ]]; then
     mv "$HOME/.ai-workspaces" "$SANDBOX_DIR/workspaces" 2>/dev/null && echo "  ✓ Migrated workspaces"
@@ -78,7 +78,7 @@ migrate_to_sandbox() {
   if [[ -f "$HOME/.ai-git-allowed" ]]; then
     mv "$HOME/.ai-git-allowed" "$SANDBOX_DIR/git-allowed" 2>/dev/null && echo "  ✓ Migrated git-allowed"
   fi
-  
+
   # Migrate git-keys (multiple files with pattern .ai-git-keys-*)
   local git_keys_found=false
   for keyfile in "$HOME"/.ai-git-keys-*; do
@@ -90,7 +90,7 @@ migrate_to_sandbox() {
     mv "$keyfile" "$SANDBOX_DIR/git-keys/$newname" 2>/dev/null
   done
   [[ "$git_keys_found" == "true" ]] && echo "  ✓ Migrated git-keys"
-  
+
   # Create marker
   date -Iseconds > "$MIGRATED_MARKER" 2>/dev/null || date > "$MIGRATED_MARKER"
   echo "✅ Migration complete!"
@@ -99,17 +99,136 @@ migrate_to_sandbox() {
 migrate_to_sandbox
 
 # ============================================================================
+# MIGRATION V2: Reorganize to tool-centric folder structure
+# home/<tool>/ → tools/<tool>/home/
+# cache/<tool>/ → tools/<tool>/cache/
+# cache/git/ → shared/git/
+# git-keys/ → shared/git/keys/
+# ============================================================================
+migrate_to_v2() {
+  local SANDBOX_DIR="$HOME/.ai-sandbox"
+  local V2_MARKER="$SANDBOX_DIR/.migrated-v2"
+
+  # Skip if already migrated to v2
+  [[ -f "$V2_MARKER" ]] && return 0
+
+  # Check if any v1 paths exist that need migration
+  local needs_migration=false
+  [[ -d "$SANDBOX_DIR/home" ]] && needs_migration=true
+  [[ -d "$SANDBOX_DIR/cache" ]] && needs_migration=true
+  [[ -d "$SANDBOX_DIR/git-keys" ]] && needs_migration=true
+
+  [[ "$needs_migration" == "false" ]] && { touch "$V2_MARKER"; return 0; }
+
+  echo "🔄 Migrating to v2 folder structure..."
+  mkdir -p "$SANDBOX_DIR/tools" "$SANDBOX_DIR/shared/git"
+
+  # Migrate per-tool home directories: home/<tool>/ → tools/<tool>/home/
+  if [[ -d "$SANDBOX_DIR/home" ]]; then
+    for tool_home in "$SANDBOX_DIR/home"/*/; do
+      [[ -d "$tool_home" ]] || continue
+      local tool_name=$(basename "$tool_home")
+      local new_path="$SANDBOX_DIR/tools/$tool_name/home"
+      if [[ ! -d "$new_path" ]]; then
+        mkdir -p "$SANDBOX_DIR/tools/$tool_name"
+        mv "$tool_home" "$new_path" 2>/dev/null && echo "  ✓ Migrated home/$tool_name → tools/$tool_name/home"
+      fi
+    done
+    # Remove empty home dir
+    rmdir "$SANDBOX_DIR/home" 2>/dev/null || true
+  fi
+
+  # Migrate per-tool cache directories: cache/<tool>/ → tools/<tool>/cache/
+  # But skip cache/git - that goes to shared/git
+  if [[ -d "$SANDBOX_DIR/cache" ]]; then
+    for tool_cache in "$SANDBOX_DIR/cache"/*/; do
+      [[ -d "$tool_cache" ]] || continue
+      local tool_name=$(basename "$tool_cache")
+      # Skip git - handled separately
+      [[ "$tool_name" == "git" ]] && continue
+      local new_path="$SANDBOX_DIR/tools/$tool_name/cache"
+      if [[ ! -d "$new_path" ]]; then
+        mkdir -p "$SANDBOX_DIR/tools/$tool_name"
+        mv "$tool_cache" "$new_path" 2>/dev/null && echo "  ✓ Migrated cache/$tool_name → tools/$tool_name/cache"
+      fi
+    done
+  fi
+
+  # Migrate cache/git/ → shared/git/ (merge contents)
+  if [[ -d "$SANDBOX_DIR/cache/git" ]]; then
+    cp -r "$SANDBOX_DIR/cache/git/"* "$SANDBOX_DIR/shared/git/" 2>/dev/null && echo "  ✓ Migrated cache/git → shared/git"
+    rm -rf "$SANDBOX_DIR/cache/git"
+    # Remove empty cache dir
+    rmdir "$SANDBOX_DIR/cache" 2>/dev/null || true
+  fi
+
+  # Migrate git-keys/ → shared/git/keys/
+  if [[ -d "$SANDBOX_DIR/git-keys" ]]; then
+    mkdir -p "$SANDBOX_DIR/shared/git/keys"
+    cp -r "$SANDBOX_DIR/git-keys/"* "$SANDBOX_DIR/shared/git/keys/" 2>/dev/null && echo "  ✓ Migrated git-keys → shared/git/keys"
+    rm -rf "$SANDBOX_DIR/git-keys"
+  fi
+
+  # Create v2 marker
+  date -Iseconds > "$V2_MARKER" 2>/dev/null || date > "$V2_MARKER"
+  echo "✅ V2 migration complete!"
+}
+
+migrate_to_v2
+
+# ============================================================================
 # PATH CONFIGURATION (consolidated under ~/.ai-sandbox/)
 # ============================================================================
 SANDBOX_DIR="$HOME/.ai-sandbox"
 mkdir -p "$SANDBOX_DIR"
 
 WORKSPACES_FILE="$SANDBOX_DIR/workspaces"
+AI_SANDBOX_CONFIG="$SANDBOX_DIR/config.json"
 CURRENT_DIR="$(pwd)"
 ENV_FILE="$SANDBOX_DIR/env"
 
-# Check if workspaces file exists
-if [[ ! -f "$WORKSPACES_FILE" ]]; then
+# Ensure jq is available (fallback to basic parsing if not)
+has_jq() {
+  command -v jq &>/dev/null
+}
+
+# Read workspaces from config.json or fallback to legacy file
+read_workspaces() {
+  if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    jq -r '.workspaces[]?' "$AI_SANDBOX_CONFIG" 2>/dev/null
+  elif [[ -f "$WORKSPACES_FILE" ]]; then
+    cat "$WORKSPACES_FILE"
+  fi
+}
+
+# Add workspace to config.json (and legacy file for backward compatibility)
+add_workspace() {
+  local ws_path="$1"
+
+  # Add to legacy file for backward compatibility
+  echo "$ws_path" >> "$WORKSPACES_FILE"
+
+  # Add to config.json if jq available
+  if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    jq --arg ws "$ws_path" '.workspaces += [$ws] | .workspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+    chmod 600 "$AI_SANDBOX_CONFIG"
+  fi
+}
+
+# Check if workspaces are configured (config.json or legacy file)
+if ! has_jq && [[ ! -f "$WORKSPACES_FILE" ]]; then
+  echo "❌ Workspaces not configured. Run setup.sh first."
+  exit 1
+fi
+
+if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+  ws_count=$(jq '.workspaces | length' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  if [[ "$ws_count" == "0" ]] && [[ ! -f "$WORKSPACES_FILE" ]]; then
+    echo "❌ Workspaces not configured. Run setup.sh first."
+    exit 1
+  fi
+elif [[ ! -f "$WORKSPACES_FILE" ]]; then
   echo "❌ Workspaces not configured. Run setup.sh first."
   exit 1
 fi
@@ -117,11 +236,12 @@ fi
 # Check if current directory is inside any whitelisted workspace
 ALLOWED=false
 while IFS= read -r ws; do
+  [[ -z "$ws" ]] && continue
   if [[ "$CURRENT_DIR" == "$ws"* ]]; then
     ALLOWED=true
     break
   fi
-done < "$WORKSPACES_FILE"
+done < <(read_workspaces)
 
 if [[ "$ALLOWED" != "true" ]]; then
   echo "⚠️  SECURITY WARNING: You are running $TOOL outside a whitelisted workspace."
@@ -133,12 +253,12 @@ if [[ "$ALLOWED" != "true" ]]; then
   if [[ -t 0 ]]; then
     read -p "Do you want to whitelist the current directory? [y/N]: " CONFIRM
     if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
-      echo "$CURRENT_DIR" >> "$WORKSPACES_FILE"
-      echo "✅ Added $CURRENT_DIR to $WORKSPACES_FILE"
+      add_workspace "$CURRENT_DIR"
+      echo "✅ Added $CURRENT_DIR to whitelisted workspaces"
     else
       echo "❌ Operation cancelled. Access denied."
       echo "📁 Allowed workspaces:"
-      cat "$WORKSPACES_FILE"
+      read_workspaces
       exit 1
     fi
   else
@@ -146,7 +266,7 @@ if [[ "$ALLOWED" != "true" ]]; then
     echo "❌ Access denied (non-interactive mode). Please add this path manually:"
     echo "   echo '$CURRENT_DIR' >> $WORKSPACES_FILE"
     echo "📁 Allowed workspaces:"
-    cat "$WORKSPACES_FILE"
+    read_workspaces
     exit 1
   fi
 fi
@@ -161,10 +281,12 @@ else
   IMAGE="ai-${TOOL}:latest"
 fi
 
-CACHE_DIR="$SANDBOX_DIR/cache/$TOOL"
-HOME_DIR="$SANDBOX_DIR/home/$TOOL"
+# V2 tool-centric paths
+CACHE_DIR="$SANDBOX_DIR/tools/$TOOL/cache"
+HOME_DIR="$SANDBOX_DIR/tools/$TOOL/home"
+GIT_SHARED_DIR="$SANDBOX_DIR/shared/git"
 
-mkdir -p "$CACHE_DIR" "$HOME_DIR"
+mkdir -p "$CACHE_DIR" "$HOME_DIR" "$GIT_SHARED_DIR"
 
 # Build volume mounts for all whitelisted workspaces
 VOLUME_MOUNTS=""
@@ -192,6 +314,12 @@ case "$TOOL" in
     ;;
   opencode)
     copy_tool_config "$HOME/.config/opencode" "$HOME_DIR/.config/opencode"
+    copy_tool_config "$HOME/.local/share/opencode" "$HOME_DIR/.local/share/opencode"
+    # Always sync auth.json if host has it (critical for authentication)
+    if [[ -f "$HOME/.local/share/opencode/auth.json" ]]; then
+      mkdir -p "$HOME_DIR/.local/share/opencode"
+      cp "$HOME/.local/share/opencode/auth.json" "$HOME_DIR/.local/share/opencode/auth.json" 2>/dev/null
+    fi
     ;;
   claude)
     copy_tool_config "$HOME/.claude" "$HOME_DIR/.claude"
@@ -247,27 +375,84 @@ fi
 # NETWORK CONFIGURATION
 # ============================================================================
 
-AI_SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
+# Note: AI_SANDBOX_CONFIG and has_jq() defined earlier in PATH CONFIGURATION
 
-# Ensure jq is available (fallback to basic parsing if not)
-has_jq() {
-  command -v jq &>/dev/null
-}
-
-# Initialize config file if it doesn't exist
+# Initialize config file if it doesn't exist or upgrade to v2
 init_config() {
   mkdir -p "$(dirname "$AI_SANDBOX_CONFIG")"
+
   if [[ ! -f "$AI_SANDBOX_CONFIG" ]]; then
-    echo '{"version":1,"networks":{"global":[],"workspaces":{}}}' > "$AI_SANDBOX_CONFIG"
+    # Create new v2 config
+    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
+    echo "$initial_config" > "$AI_SANDBOX_CONFIG"
+    chmod 600 "$AI_SANDBOX_CONFIG"
+
+    # Migrate legacy files if they exist
+    migrate_legacy_to_config
+  elif has_jq; then
+    # Check version and upgrade if needed
+    local version=$(jq -r '.version // 1' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    if [[ "$version" == "1" ]]; then
+      upgrade_config_to_v2
+    fi
+  fi
+}
+
+# Migrate legacy workspaces and git-allowed files to config.json
+migrate_legacy_to_config() {
+  if ! has_jq; then
+    return 0  # Can't migrate without jq
+  fi
+
+  local LEGACY_WORKSPACES="$SANDBOX_DIR/workspaces"
+  local LEGACY_GIT_ALLOWED="$SANDBOX_DIR/git-allowed"
+
+  # Migrate workspaces file
+  if [[ -f "$LEGACY_WORKSPACES" ]]; then
+    local ws_array="[]"
+    while IFS= read -r ws; do
+      [[ -n "$ws" ]] && ws_array=$(echo "$ws_array" | jq --arg w "$ws" '. + [$w]')
+    done < "$LEGACY_WORKSPACES"
+
+    jq --argjson ws "$ws_array" '.workspaces = $ws' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
     chmod 600 "$AI_SANDBOX_CONFIG"
   fi
+
+  # Migrate git-allowed file
+  if [[ -f "$LEGACY_GIT_ALLOWED" ]]; then
+    local git_array="[]"
+    while IFS= read -r ws; do
+      [[ -n "$ws" ]] && git_array=$(echo "$git_array" | jq --arg w "$ws" '. + [$w]')
+    done < "$LEGACY_GIT_ALLOWED"
+
+    jq --argjson gw "$git_array" '.git.allowedWorkspaces = $gw' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+      && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+    chmod 600 "$AI_SANDBOX_CONFIG"
+  fi
+}
+
+# Upgrade v1 config to v2 schema
+upgrade_config_to_v2() {
+  if ! has_jq; then
+    return 0
+  fi
+
+  # Add missing v2 fields while preserving existing networks
+  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}})' \
+    "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+  chmod 600 "$AI_SANDBOX_CONFIG"
+
+  # Migrate legacy files after upgrade
+  migrate_legacy_to_config
 }
 
 # Read networks for current workspace (workspace > global > empty)
 read_network_config() {
   init_config
   local workspace="$CURRENT_DIR"
-  
+
   if has_jq; then
     # Try workspace-specific first
     local ws_networks=$(jq -r --arg ws "$workspace" '.networks.workspaces[$ws] // empty | .[]?' "$AI_SANDBOX_CONFIG" 2>/dev/null)
@@ -288,12 +473,12 @@ write_network_config() {
   local scope="$1"  # "workspace" or "global"
   shift
   local networks=("$@")
-  
+
   init_config
-  
+
   if has_jq; then
     local json_array=$(printf '%s\n' "${networks[@]}" | jq -R . | jq -s .)
-    
+
     if [[ "$scope" == "workspace" ]]; then
       jq --arg ws "$CURRENT_DIR" --argjson nets "$json_array" \
         '.networks.workspaces[$ws] = $nets' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
@@ -314,14 +499,14 @@ write_network_config() {
 validate_networks() {
   local networks=("$@")
   local valid=()
-  
+
   for net in "${networks[@]}"; do
     [[ -z "$net" ]] && continue
     if docker network inspect "$net" &>/dev/null; then
       valid+=("$net")
     fi
   done
-  
+
   printf '%s\n' "${valid[@]}"
 }
 
@@ -354,30 +539,30 @@ show_network_menu() {
   local custom_nets=()
   local all_nets=()
   local selected=()
-  
+
   echo "🔍 Discovering Docker networks..."
   echo ""
-  
+
   # Gather networks
   while IFS= read -r net; do
     [[ -n "$net" ]] && compose_nets+=("$net")
   done < <(discover_compose_networks)
-  
+
   while IFS= read -r net; do
     [[ -n "$net" ]] && custom_nets+=("$net")
   done < <(discover_custom_networks)
-  
+
   # Build combined list: select-all first, then compose, then custom, then "none"
   # Index layout: [0]=select-all, [1..compose_count]=compose, [compose_count+1..custom_end]=custom, [last]=none
   local network_count=$((${#compose_nets[@]} + ${#custom_nets[@]}))
   all_nets=("select-all" "${compose_nets[@]}" "${custom_nets[@]}" "none")
-  
+
   if [[ $network_count -eq 0 ]]; then
     echo "ℹ️  No Docker networks found (besides system networks)."
     SELECTED_NETWORKS=()
     return 0
   fi
-  
+
   # Initialize selection array (none is pre-selected)
   local sel=()
   local select_all_idx=0
@@ -385,7 +570,7 @@ show_network_menu() {
   local compose_end=$((1 + ${#compose_nets[@]}))
   local custom_start=$compose_end
   local none_idx=$((${#all_nets[@]} - 1))
-  
+
   for ((i=0; i<${#all_nets[@]}; i++)); do
     if [[ "${all_nets[$i]}" == "none" ]]; then
       sel[$i]=1
@@ -393,18 +578,18 @@ show_network_menu() {
       sel[$i]=0
     fi
   done
-  
+
   local cursor=0
-  
+
   tput civis
   trap 'tput cnorm' INT TERM EXIT
-  
+
   while true; do
     clear
     echo "🔗 Network Selection"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    
+
     # Select All option
     local check="[ ]"
     [[ ${sel[$select_all_idx]} -eq 1 ]] && check="[x]"
@@ -416,7 +601,7 @@ show_network_menu() {
     fi
     tput sgr0
     echo ""
-    
+
     # Compose Networks section
     if [[ ${#compose_nets[@]} -gt 0 ]]; then
       echo "Compose Networks:"
@@ -425,14 +610,14 @@ show_network_menu() {
         local containers=$(get_network_containers "$net")
         local check="[ ]"
         [[ ${sel[$i]} -eq 1 ]] && check="[x]"
-        
+
         if [[ $i -eq $cursor ]]; then
           tput setaf 6
           printf "  ➔ %s %-30s" "$check" "$net"
         else
           printf "    %s %-30s" "$check" "$net"
         fi
-        
+
         if [[ -n "$containers" ]]; then
           tput setaf 8
           printf " (%s)" "$containers"
@@ -442,7 +627,7 @@ show_network_menu() {
       done
       echo ""
     fi
-    
+
     # Custom Networks section
     if [[ ${#custom_nets[@]} -gt 0 ]]; then
       echo "Other Networks:"
@@ -451,14 +636,14 @@ show_network_menu() {
         local containers=$(get_network_containers "$net")
         local check="[ ]"
         [[ ${sel[$i]} -eq 1 ]] && check="[x]"
-        
+
         if [[ $i -eq $cursor ]]; then
           tput setaf 6
           printf "  ➔ %s %-30s" "$check" "$net"
         else
           printf "    %s %-30s" "$check" "$net"
         fi
-        
+
         if [[ -n "$containers" ]]; then
           tput setaf 8
           printf " (%s)" "$containers"
@@ -468,7 +653,7 @@ show_network_menu() {
       done
       echo ""
     fi
-    
+
     # None option
     echo ""
     local check="[ ]"
@@ -480,11 +665,11 @@ show_network_menu() {
       printf "    %s None (no network)\n" "$check"
     fi
     tput sgr0
-    
+
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "↑↓ Move  SPACE Select  a Select All  ENTER Confirm"
-    
+
     # Read input
     IFS= read -rsn1 key
     if [[ "$key" == $'\x1b' ]]; then
@@ -542,10 +727,10 @@ show_network_menu() {
       esac
     fi
   done
-  
+
   tput cnorm
   trap - INT TERM EXIT
-  
+
   # Collect selected networks (exclude select-all and none)
   SELECTED_NETWORKS=()
   for ((i=1; i<${#all_nets[@]}; i++)); do
@@ -559,17 +744,17 @@ show_network_menu() {
 show_save_prompt() {
   local options=("This workspace" "Global (all workspaces)" "Don't save")
   local cursor=0
-  
+
   echo ""
-  
+
   tput civis
   trap 'tput cnorm' INT TERM EXIT
-  
+
   while true; do
     # Move cursor up to redraw (3 options + header)
     tput cuu 5 2>/dev/null || true
     tput ed 2>/dev/null || true
-    
+
     echo "Save selection?"
     for ((i=0; i<${#options[@]}; i++)); do
       if [[ $i -eq $cursor ]]; then
@@ -588,7 +773,7 @@ show_save_prompt() {
       fi
       tput sgr0
     done
-    
+
     IFS= read -rsn1 key
     if [[ "$key" == $'\x1b' ]]; then
       read -rsn2 -t 1 escape_seq
@@ -604,10 +789,10 @@ show_save_prompt() {
       esac
     fi
   done
-  
+
   tput cnorm
   trap - INT TERM EXIT
-  
+
   SAVE_CHOICE=$cursor  # 0=workspace, 1=global, 2=don't save
 }
 
@@ -623,7 +808,7 @@ if [[ "$NETWORK_FLAG" == "true" ]]; then
   elif [[ -t 0 ]]; then
     # Interactive mode: show menu
     show_network_menu
-    
+
     if [[ ${#SELECTED_NETWORKS[@]} -gt 0 ]]; then
       show_save_prompt
       case $SAVE_CHOICE in
@@ -652,15 +837,28 @@ fi
 # Git access control (opt-in per workspace)
 GIT_MOUNTS=""
 GIT_ALLOWED_FILE="$SANDBOX_DIR/git-allowed"
-GIT_CACHE_DIR="$SANDBOX_DIR/cache/git"
+GIT_CACHE_DIR="$GIT_SHARED_DIR"  # V2: Uses shared/git instead of cache/git
 touch "$GIT_ALLOWED_FILE" 2>/dev/null || true
 
+# Check if Git access is allowed for this workspace (config.json or legacy file)
+is_git_allowed() {
+  local ws="$1"
+  # Check config.json first
+  if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    local allowed=$(jq -r --arg ws "$ws" '.git.allowedWorkspaces | index($ws) // -1' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    [[ "$allowed" -ge 0 ]] && return 0
+  fi
+  # Fallback to legacy file
+  grep -q "^$ws$" "$GIT_ALLOWED_FILE" 2>/dev/null && return 0
+  return 1
+}
+
 # Check if Git access is allowed for this workspace
-if grep -q "^$CURRENT_DIR$" "$GIT_ALLOWED_FILE" 2>/dev/null; then
+if is_git_allowed "$CURRENT_DIR"; then
   # Previously allowed for this workspace
   # Check if saved keys exist for this workspace
   WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-  SAVED_KEYS_FILE="$SANDBOX_DIR/git-keys/$WORKSPACE_MD5"
+  SAVED_KEYS_FILE="$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"  # V2: Uses shared/git/keys/
 
   if [ -f "$SAVED_KEYS_FILE" ]; then
     # Use previously saved key selection
@@ -842,10 +1040,16 @@ else
             if [ "$git_choice" = "2" ]; then
               # Save workspace and selected keys for future sessions
               echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
+              # Also save to config.json
+              if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+                jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                  && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+                chmod 600 "$AI_SANDBOX_CONFIG"
+              fi
               # Save selected keys (one per line for easier parsing)
               WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-              mkdir -p "$SANDBOX_DIR/git-keys"
-              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$SANDBOX_DIR/git-keys/$WORKSPACE_MD5"
+              mkdir -p "$GIT_SHARED_DIR/keys"  # V2: Uses shared/git/keys/
+              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
               echo "✅ Git access enabled and saved for: $CURRENT_DIR"
             else
               echo "✅ Git access enabled for this session"
@@ -871,27 +1075,27 @@ fi
 # Format: {tool}-{sanitized_folder_name}-{random_suffix}
 generate_container_name() {
   local folder_name=$(basename "$CURRENT_DIR")
-  
+
   # Sanitize: keep only alphanumeric, hyphens, underscores
   # Replace spaces with hyphens, remove special chars
   folder_name=$(echo "$folder_name" | tr ' ' '-' | tr -cd '[:alnum:]_-' | tr '[:upper:]' '[:lower:]')
-  
+
   # Limit length (max 50 chars for container name, leaving room for random suffix)
   if [[ ${#folder_name} -gt 40 ]]; then
     folder_name="${folder_name:0:40}"
   fi
-  
+
   # Remove trailing hyphens/underscores
   folder_name=$(echo "$folder_name" | sed 's/[-_]*$//')
-  
+
   # If empty after sanitization, use "workspace"
   if [[ -z "$folder_name" ]]; then
     folder_name="workspace"
   fi
-  
+
   # Generate random 6-character suffix (hex)
   local random_suffix=$(openssl rand -hex 3)
-  
+
   echo "${TOOL}-${folder_name}-${random_suffix}"
 }
 
@@ -920,12 +1124,12 @@ PORT_MAPPINGS=""
 if [[ -n "${PORT:-}" ]]; then
   PORT_BIND="${PORT_BIND:-localhost}"
   BIND_ADDR="127.0.0.1"
-  
+
   if [[ "$PORT_BIND" == "all" ]]; then
     BIND_ADDR="0.0.0.0"
     echo "⚠️  WARNING: Ports will be accessible from network (PORT_BIND=all)"
   fi
-  
+
   IFS=',' read -ra PORTS <<< "$PORT"
   for port in "${PORTS[@]}"; do
     # Trim whitespace
@@ -937,7 +1141,7 @@ if [[ -n "${PORT:-}" ]]; then
       echo "⚠️  WARNING: Invalid port number: $port (skipped)"
     fi
   done
-  
+
   if [[ -n "$PORT_MAPPINGS" ]]; then
     echo "🔌 Port mappings: ${PORT//,/ }"
   fi
