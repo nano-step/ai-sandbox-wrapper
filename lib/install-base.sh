@@ -147,8 +147,8 @@ WORKDIR /workspace
 # Non-root user for security
 # Non-root user for security (match host UID)
 RUN useradd -m -u \${AGENT_UID} -d /home/agent agent && \\
-    mkdir -p /home/agent/.cache /home/agent/.npm /home/agent/.opencode && \\
-    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /workspace
+    mkdir -p /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config && \\
+    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config /workspace
 USER agent
 ENV HOME=/home/agent
 EOF

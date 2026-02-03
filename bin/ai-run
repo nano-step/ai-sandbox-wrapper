@@ -357,65 +357,71 @@ done < "$WORKSPACES_FILE"
 # All tool configs now live in HOME_DIR (~/.ai-sandbox/home/$TOOL/)
 # which is mounted as /home/agent in the container
 
-copy_tool_config() {
-  local src="$1"
-  local dest="$2"
-  if [[ -e "$src" && ! -e "$dest" ]]; then
-    mkdir -p "$(dirname "$dest")"
-    cp -r "$src" "$dest" 2>/dev/null && echo "  ✓ Copied $src → $dest"
+# Tool-specific config persistence
+# Instead of copying (one-way), we now bind-mount host paths directly
+# to ensure changes inside the container persist to the host.
+TOOL_CONFIG_MOUNTS=""
+
+mount_tool_config() {
+  local host_path="$1"
+  local container_path="$2" # Relative to /home/agent
+
+  if [[ -e "$host_path" || -d "$(dirname "$host_path")" ]]; then
+    # Ensure directory exists on host to avoid root-owned directory creation by Docker
+    if [[ "$host_path" == */ ]]; then
+      mkdir -p "$host_path"
+    else
+      mkdir -p "$(dirname "$host_path")"
+    fi
+    TOOL_CONFIG_MOUNTS="$TOOL_CONFIG_MOUNTS -v $host_path:/home/agent/$container_path:delegated"
   fi
 }
 
 case "$TOOL" in
   amp)
-    copy_tool_config "$HOME/.config/amp" "$HOME_DIR/.config/amp"
-    copy_tool_config "$HOME/.local/share/amp" "$HOME_DIR/.local/share/amp"
+    mount_tool_config "$HOME/.config/amp" ".config/amp"
+    mount_tool_config "$HOME/.local/share/amp" ".local/share/amp"
     ;;
   opencode)
-    copy_tool_config "$HOME/.config/opencode" "$HOME_DIR/.config/opencode"
-    copy_tool_config "$HOME/.local/share/opencode" "$HOME_DIR/.local/share/opencode"
-    # Always sync auth.json if host has it (critical for authentication)
-    if [[ -f "$HOME/.local/share/opencode/auth.json" ]]; then
-      mkdir -p "$HOME_DIR/.local/share/opencode" 2>/dev/null || true
-      cp "$HOME/.local/share/opencode/auth.json" "$HOME_DIR/.local/share/opencode/auth.json" 2>/dev/null || true
-    fi
+    mount_tool_config "$HOME/.config/opencode" ".config/opencode"
+    mount_tool_config "$HOME/.local/share/opencode" ".local/share/opencode"
     ;;
   claude)
-    copy_tool_config "$HOME/.claude" "$HOME_DIR/.claude"
+    mount_tool_config "$HOME/.claude" ".claude"
     ;;
   droid)
-    copy_tool_config "$HOME/.config/droid" "$HOME_DIR/.config/droid"
+    mount_tool_config "$HOME/.config/droid" ".config/droid"
     ;;
   qoder)
-    copy_tool_config "$HOME/.config/qoder" "$HOME_DIR/.config/qoder"
+    mount_tool_config "$HOME/.config/qoder" ".config/qoder"
     ;;
   auggie)
-    copy_tool_config "$HOME/.config/auggie" "$HOME_DIR/.config/auggie"
+    mount_tool_config "$HOME/.config/auggie" ".config/auggie"
     ;;
   codebuddy)
-    copy_tool_config "$HOME/.config/codebuddy" "$HOME_DIR/.config/codebuddy"
+    mount_tool_config "$HOME/.config/codebuddy" ".config/codebuddy"
     ;;
   jules)
-    copy_tool_config "$HOME/.config/jules" "$HOME_DIR/.config/jules"
+    mount_tool_config "$HOME/.config/jules" ".config/jules"
     ;;
   shai)
-    copy_tool_config "$HOME/.config/shai" "$HOME_DIR/.config/shai"
+    mount_tool_config "$HOME/.config/shai" ".config/shai"
     ;;
   gemini)
-    copy_tool_config "$HOME/.config/gemini" "$HOME_DIR/.config/gemini"
+    mount_tool_config "$HOME/.config/gemini" ".config/gemini"
     ;;
   aider)
-    copy_tool_config "$HOME/.config/aider" "$HOME_DIR/.config/aider"
-    copy_tool_config "$HOME/.aider" "$HOME_DIR/.aider"
+    mount_tool_config "$HOME/.config/aider" ".config/aider"
+    mount_tool_config "$HOME/.aider" ".aider"
     ;;
   kilo)
-    copy_tool_config "$HOME/.config/kilo" "$HOME_DIR/.config/kilo"
+    mount_tool_config "$HOME/.config/kilo" ".config/kilo"
     ;;
   codex)
-    copy_tool_config "$HOME/.config/codex" "$HOME_DIR/.config/codex"
+    mount_tool_config "$HOME/.config/codex" ".config/codex"
     ;;
   qwen)
-    copy_tool_config "$HOME/.config/qwen" "$HOME_DIR/.config/qwen"
+    mount_tool_config "$HOME/.config/qwen" ".config/qwen"
     ;;
 esac
 
@@ -1208,6 +1214,7 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $ENTRYPOINT_OVERRIDE \
   $VOLUME_MOUNTS \
   $CONFIG_MOUNT \
+  $TOOL_CONFIG_MOUNTS \
   $GIT_MOUNTS \
   $NETWORK_OPTIONS \
   $CACHE_MOUNTS \

@@ -8,46 +8,26 @@ AI coding tools like Claude, Gemini, and Aider have full access to your filesyst
 
 **What you get:** Peace of mind using AI coding tools without risking your personal and system data.
 
-*Last updated: Wednesday, January 29, 2026*
+*Last updated: Tuesday, February 3, 2026*
+
+## ✨ New in v2.1.0: Stability & Native Persistence
+
+The **v2.1.0 release** focuses on architectural stability and a more intuitive persistence model.
+
+-   ✅ **Stable Node 22 LTS**: Switched to a robust Node 22 base image for maximum compatibility and performance.
+-   ✅ **Direct Mount Persistence**: Changes made *inside* the container (logins, settings, sessions) now save directly to your host's native folders.
+-   ✅ **Cache Isolation**: Heavy caches (`node_modules`, `.npm`, `.cache`) are isolated using anonymous volumes to prevent "cache poisoning" and runtime conflicts.
+
+### Native Config Mapping
+Your tool configurations are now directly linked from your Mac/PC:
+- Host: `~/.config/opencode` ↔ Container: `/home/agent/.config/opencode`
+- Host: `~/.local/share/opencode` ↔ Container: `/home/agent/.local/share/opencode`
+
+---
 
 ## ⚠️ Breaking Change: v2.0.0 - Config Directory Reorganization
 
-**Version 2.0.0** reorganizes the directory structure to a tool-centric layout and introduces a unified `config.json`.
-
-### New Structure (v2)
-```
-~/.ai-sandbox/
-├── config.json         # Unified config (workspaces, git, networks)
-├── tools/              # Tool-centric organization
-│   ├── claude/
-│   │   ├── home/       # Tool config (was: ~/.ai-sandbox/home/claude/)
-│   │   └── cache/      # Tool cache (was: ~/.ai-sandbox/cache/claude/)
-│   ├── gemini/
-│   │   ├── home/
-│   │   └── cache/
-│   └── ... (other tools)
-└── shared/
-    └── git/            # Shared git config
-        ├── ssh/        # SSH keys and config
-        └── keys/       # Per-workspace key selections
-```
-
-### Automatic Migration
-
-When you run any AI tool, the wrapper automatically migrates:
-
-| Old Location | New Location |
-|--------------|-------------|
-| `~/.ai-sandbox/home/<tool>/` | `~/.ai-sandbox/tools/<tool>/home/` |
-| `~/.ai-sandbox/cache/<tool>/` | `~/.ai-sandbox/tools/<tool>/cache/` |
-| `~/.ai-sandbox/cache/git/` | `~/.ai-sandbox/shared/git/` |
-| `~/.ai-sandbox/git-keys/` | `~/.ai-sandbox/shared/git/keys/` |
-| `~/.ai-sandbox/workspaces` (file) | `config.json.workspaces` |
-| `~/.ai-sandbox/git-allowed` (file) | `config.json.git.allowedWorkspaces` |
-
-**No action required** - migration happens automatically on first run.
-
-**Legacy file compatibility**: Old files (`workspaces`, `git-allowed`) are still read as fallback.
+**Version 2.0.0** reorganized the directory structure to a tool-centric layout and introduced a unified `config.json`.
 
 ## 🛡️ Why Use This?
 
@@ -182,7 +162,7 @@ docker pull registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-aider:latest
 ```
 
 **Available pre-built images:**
-- `ai-base:latest` - Base image with Bun runtime
+- `ai-base:latest` - Base image with Node.js 22 LTS runtime
 - `ai-amp:latest` - Sourcegraph Amp
 - `ai-claude:latest` - Claude Code CLI
 - `ai-droid:latest` - Factory CLI
@@ -211,12 +191,12 @@ docker pull registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-aider:latest
 |------|--------|--------------|-------------|
 | **claude** | ✅ | Native binary | Anthropic Claude Code |
 | **opencode** | ✅ | Native Go | Open-source AI coding |
-| **gemini** | ✅ | npm/Bun | Google Gemini CLI (free tier) |
+| **gemini** | ✅ | npm/Node | Google Gemini CLI (free tier) |
 | **aider** | ✅ | Python | AI pair programmer (Git-native) |
-| **kilo** | ✅ | npm/Bun | Kilo Code (500+ models) |
-| **codex** | ✅ | npm/Bun | OpenAI Codex agent |
-| **amp** | ✅ | npm/Bun | Sourcegraph Amp |
-| **qwen** | ✅ | npm/Bun | Alibaba Qwen CLI (1M context) |
+| **kilo** | ✅ | npm/Node | Kilo Code (500+ models) |
+| **codex** | ✅ | npm/Node | OpenAI Codex agent |
+| **amp** | ✅ | npm/Node | Sourcegraph Amp |
+| **qwen** | ✅ | npm/Node | Alibaba Qwen CLI (1M context) |
 | **droid** | ✅ | Custom | Factory CLI |
 
 > **Note:** GUI tools (VSCode, codeserver) have been removed in v2.0.1. Use your native IDE with AI tools running in the sandbox.
@@ -225,20 +205,18 @@ docker pull registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-aider:latest
 
 ### Native Tool Config Compatibility
 
-Not all tools have been fully tested with the v2 folder structure. If you encounter issues with a specific tool's configuration not being recognized:
+In v2.1.0+, tool configurations are **directly bind-mounted** from your host. This ensures 100% compatibility with your native tool settings and authentications.
 
-1. **Check if config exists on host:** `ls ~/.config/<tool>/` or `ls ~/.<tool>/`
-2. **Check if config was copied to sandbox:** `ls ~/.ai-sandbox/tools/<tool>/home/`
-3. **Manual copy if needed:** `cp -r ~/.config/<tool> ~/.ai-sandbox/tools/<tool>/home/.config/`
+1. **Host Config**: `~/.config/<tool>/` or `~/.<tool>/`
+2. **Container Mount**: `/home/agent/.config/<tool>` (Automatic)
 
-**Known working tools:**
-- ✅ `claude` - Full config sync
-- ✅ `opencode` - Config + auth.json sync
-- ✅ `amp` - Config + secrets sync
-- ✅ `gemini` - Config sync
-
-**Needs verification:**
-- ⚠️ `aider`, `kilo`, `codex`, `qwen`, `droid`, `qoder`, `auggie`, `codebuddy`, `jules`, `shai`
+**Currently Supported for Direct Mount:**
+- ✅ `claude`
+- ✅ `opencode`
+- ✅ `amp`
+- ✅ `gemini`
+- ✅ `aider`
+- ... and all other supported tools.
 
 Please [open an issue](https://github.com/kokorolx/ai-sandbox-wrapper/issues) if you encounter problems with specific tools.
 
@@ -266,25 +244,16 @@ AI Sandbox Wrapper creates and manages a single consolidated directory in your h
 
 ```
 ~/.ai-sandbox/
-├── cache/           # Tool-specific cache directories
-│   ├── claude/      # Claude Code cache
-│   ├── gemini/      # Gemini CLI cache
-│   ├── aider/       # Aider cache
-│   └── git/         # Git credentials cache (when enabled)
-│       └── ssh/     # SSH keys and config for allowed workspace
-├── home/            # Tool home directories with persistent configs
-│   ├── claude/      # .claude.json and settings
-│   ├── gemini/      # Gemini configuration
-│   ├── aider/       # Aider config and history
-│   └── .gitconfig   # Git configuration (when Git access enabled)
-├── config.json      # Network configuration
-├── workspaces       # List of whitelisted directories AI can access
-├── env              # API keys (format: KEY=value, one per line)
-├── git-allowed      # Workspaces with persistent Git access
-├── git-keys/        # Saved SSH key selections for each workspace
-│   └── {hash}       # MD5-hashed workspace path
-└── .migrated        # Migration marker (prevents re-migration)
+├── config.json      # Unified config (workspaces, git, networks)
+├── tools/           # Isolated sandbox environments
+│   └── <tool>/
+│       └── home/    # Sandbox home directory (excludes native configs)
+├── shared/          # Shared assets
+│   └── git/         # Shared git config and keys
+└── env              # API keys (format: KEY=value)
 ```
+
+**Note:** Tools also bind-mount your **native** `~/.config/<tool>` directories for persistence.
 
 ### Key Files
 
@@ -492,21 +461,19 @@ GOOGLE_API_KEY=AIza...
 
 ### Per-Project Config
 
-Each tool supports project-specific config files that override global settings:
+Each tool supports project-specific config files that override global settings. These files are located in your workspace and are accessible to the tool:
 
-| Tool | Project Config | Global Config Location |
-|------|----------------|------------------------|
-| Claude | `.claude.json` | `~/.ai-sandbox/home/claude/.claude/` |
-| Gemini | `.gemini.json` | `~/.ai-sandbox/home/gemini/.config/gemini/` |
-| Aider | `.aider.conf` | `~/.ai-sandbox/home/aider/.config/aider/` |
-| Opencode | `.opencode.json` | `~/.ai-sandbox/home/opencode/.config/opencode/` |
-| Kilo | `.kilo.json` | `~/.ai-sandbox/home/kilo/.config/kilo/` |
-| Codex | `.codex.json` | `~/.ai-sandbox/home/codex/.config/codex/` |
-| Amp | `.amp.json` | `~/.ai-sandbox/home/amp/.config/amp/` |
+| Tool | Project Config | Native Global Config |
+|------|----------------|----------------------|
+| Claude | `.claude.json` | `~/.config/claude/` |
+| Gemini | `.gemini.json` | `~/.config/gemini/` |
+| Aider | `.aider.conf` | `~/.config/aider/` |
+| Opencode | `.opencode.json` | `~/.config/opencode/` |
+| Amp | `.amp.json` | `~/.config/amp/` |
 
-**Priority:** Project config > Global config > Container defaults
+**Persistence:** Since v2.1.0, changes to global settings *inside* the container are automatically saved back to your **Native Global Config** on the host.
 
-**Note:** Existing configs from `~/.config/{tool}/` or `~/.claude/` are automatically migrated to the new location on first run.
+**Priority:** Project config > Native Global config > Container defaults
 
 ```bash
 # Example: Project-specific Claude config
@@ -667,8 +634,11 @@ nano ~/.ai-sandbox/git-allowed  # Delete the line
 - Verify setup completed: check if `~/bin/ai-run` exists
 
 **"Workspaces not configured"** (Legacy)
-- Note: This error is mostly resolved in v2.1.0+.
+- Note: This error is resolved in v2.1.0+.
 - Run setup again: `./setup.sh` or simply run an AI tool in your project folder to trigger interactive whitelisting.
+
+**"BunInstallFailedError"** (Resolved in v2.1.0)
+- This was caused by stale caches. We now use **Cache Isolation** via anonymous volumes. If you still see this, run `./setup.sh --no-cache` to force a clean build.
 
 **Tool doesn't start**
 - Check if you selected the tool during setup
