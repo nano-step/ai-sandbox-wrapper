@@ -18,8 +18,8 @@ if [[ "${INSTALL_UX_UI_PROMAX:-0}" -eq 1 ]]; then
   echo "📦 ux-ui-promax will be installed in base image"
   ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /usr/local/lib/uipro-cli && \
     cd /usr/local/lib/uipro-cli && \
-    bun init -y && \
-    bun add uipro-cli && \
+    npm init -y && \
+    npm install uipro-cli && \
     ln -sf /usr/local/lib/uipro-cli/node_modules/.bin/uipro /usr/local/bin/uipro && \
     ln -sf /usr/local/bin/uipro /usr/local/bin/uipro-cli && \
     chmod -R 755 /usr/local/lib/uipro-cli && \
@@ -31,8 +31,8 @@ if [[ "${INSTALL_OPENSPEC:-0}" -eq 1 ]]; then
   echo "📦 OpenSpec will be installed in base image"
   ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /usr/local/lib/openspec && \
     cd /usr/local/lib/openspec && \
-    bun init -y && \
-    bun add @fission-ai/openspec && \
+    npm init -y && \
+    npm install @fission-ai/openspec && \
     ln -sf /usr/local/lib/openspec/node_modules/.bin/openspec /usr/local/bin/openspec && \
     chmod -R 755 /usr/local/lib/openspec && \
     chmod +x /usr/local/bin/openspec
@@ -105,40 +105,38 @@ RUN gem install rails -v 8.0.2 && gem install bundler && rbenv rehash
 fi
 
 cat > "dockerfiles/base/Dockerfile" <<EOF
-FROM oven/bun:latest
+FROM node:24-bookworm-slim
 
-# Install common dependencies (Bun + Node.js + Python for full package manager support)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    git \\
-    curl \\
-    ssh \\
-    ca-certificates \\
-    jq \\
-    python3 \\
-    python3-pip \\
-    python3-venv \\
-    python3-dev \\
-    python3-setuptools \\
-    build-essential \\
-    libopenblas-dev \\
-    pipx \\
-    && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \\
-    && rm -rf /var/lib/apt/lists/* \\
+ARG AGENT_UID=1001
+
+# Install common dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ssh \
+    ca-certificates \
+    jq \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    python3-setuptools \
+    build-essential \
+    libopenblas-dev \
+    pipx \
+    unzip \
+    && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
+    && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath
 
-# Install Node.js LTS (includes npm) via NodeSource
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \\
-    && apt-get install -y nodejs \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Install pnpm globally via npm
+# Install pnpm globally
 RUN npm install -g pnpm
 
-# Install TypeScript and LSP tools for AI coding assistants
+# Install TypeScript and LSP tools
 RUN npm install -g typescript typescript-language-server
 
 # Verify installations
-RUN node --version && npm --version && pnpm --version && bun --version && tsc --version
+RUN node --version && npm --version && pnpm --version && tsc --version
 
 # Install additional tools (if selected)
 ${ADDITIONAL_TOOLS_INSTALL}
@@ -146,13 +144,17 @@ ${ADDITIONAL_TOOLS_INSTALL}
 WORKDIR /workspace
 
 # Non-root user for security
-RUN useradd -m -u 1001 -d /home/agent agent && \\
+# Non-root user for security (match host UID)
+RUN useradd -m -u \${AGENT_UID} -d /home/agent agent && \\
     chown -R agent:agent /workspace
 USER agent
 ENV HOME=/home/agent
 EOF
 
-echo "Building base Docker image with Bun runtime..."
-docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-base:latest" "dockerfiles/base"
+echo "Building base Docker image..."
+HOST_UID=$(id -u)
+docker build ${DOCKER_NO_CACHE:+--no-cache} \
+  --build-arg AGENT_UID="${HOST_UID}" \
+  -t "ai-base:latest" "dockerfiles/base"
 echo "✅ Base image built (ai-base:latest)"
 

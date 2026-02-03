@@ -133,6 +133,8 @@ migrate_to_v2() {
         mkdir -p "$SANDBOX_DIR/tools/$tool_name"
         mv "$tool_home" "$new_path" 2>/dev/null && echo "  ✓ Migrated home/$tool_name → tools/$tool_name/home"
       fi
+      # Ensure common subdirectories exist and permissions are set
+      mkdir -p "$new_path/.config" "$new_path/.local/share" "$new_path/.cache" "$new_path/.bun"
     done
     # Remove empty home dir
     rmdir "$SANDBOX_DIR/home" 2>/dev/null || true
@@ -336,13 +338,14 @@ if [[ "$AI_IMAGE_SOURCE" == "registry" ]]; then
   IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-${TOOL}:latest"
 else
   IMAGE="ai-${TOOL}:latest"
-fi
+    fi
 
 # V2 tool-centric paths
 HOME_DIR="$SANDBOX_DIR/tools/$TOOL/home"
 GIT_SHARED_DIR="$SANDBOX_DIR/shared/git"
 
-mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
+mkdir -p "$HOME_DIR"
+mkdir -p "$GIT_SHARED_DIR"
 
 # Build volume mounts for all whitelisted workspaces
 VOLUME_MOUNTS=""
@@ -417,7 +420,7 @@ case "$TOOL" in
 esac
 
 # Ensure required directories exist in HOME_DIR
-mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.cache"
+mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.cache" "$HOME_DIR/.bun"
 
 # Project-level config mount (if exists)
 CONFIG_MOUNT=""
@@ -1035,7 +1038,7 @@ else
               fi
               # Save selected keys (one per line for easier parsing)
               WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-              mkdir -p "$GIT_SHARED_DIR/keys"  # V2: Uses shared/git/keys/
+              mkdir -p "$GIT_SHARED_DIR/keys"
               printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
               echo "✅ Git access enabled and saved for: $CURRENT_DIR"
             else
