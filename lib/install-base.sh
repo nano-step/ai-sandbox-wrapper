@@ -64,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
-# Install Playwright and browsers via npm (avoids pnpm global bin issues)
+# Install Playwright and browsers via npm
 RUN npm install -g playwright && npx playwright install
 '
 fi
@@ -105,11 +105,12 @@ RUN gem install rails -v 8.0.2 && gem install bundler && rbenv rehash
 fi
 
 cat > "dockerfiles/base/Dockerfile" <<EOF
-FROM node:24-bookworm-slim
+FROM node:22-bookworm-slim
 
 ARG AGENT_UID=1001
 
 # Install common dependencies
+# Note: python3-venv is needed for many tools, unzip for some installers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -129,10 +130,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath
 
-# Install pnpm globally
+# Install pnpm globally using npm (not bun, for stability)
 RUN npm install -g pnpm
 
-# Install TypeScript and LSP tools
+# Install TypeScript and LSP tools using npm
 RUN npm install -g typescript typescript-language-server
 
 # Verify installations
@@ -146,7 +147,8 @@ WORKDIR /workspace
 # Non-root user for security
 # Non-root user for security (match host UID)
 RUN useradd -m -u \${AGENT_UID} -d /home/agent agent && \\
-    chown -R agent:agent /workspace
+    mkdir -p /home/agent/.cache /home/agent/.npm /home/agent/.opencode && \\
+    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /workspace
 USER agent
 ENV HOME=/home/agent
 EOF

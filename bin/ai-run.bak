@@ -855,7 +855,7 @@ if is_git_allowed "$CURRENT_DIR"; then
     echo "📋 Syncing Git credentials..."
     if [ -d "$GIT_CACHE_DIR/ssh" ]; then
       chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-      rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+      rm -rf "$GIT_CACHE_DIR/ssh"
     fi
     mkdir -p "$GIT_CACHE_DIR/ssh"
 
@@ -871,12 +871,12 @@ if is_git_allowed "$CURRENT_DIR"; then
       dst_file="$GIT_CACHE_DIR/ssh/$key"
 
       dst_dir=$(dirname "$dst_file")
-      mkdir -p "$dst_dir" 2>/dev/null || true
-      chmod 700 "$dst_dir" 2>/dev/null || true
+      mkdir -p "$dst_dir"
+      chmod 700 "$dst_dir"
 
       if [ -f "$src_file" ]; then
-        cp "$src_file" "$dst_file" 2>/dev/null || true
-        chmod 600 "$dst_file" 2>/dev/null || true
+        cp "$src_file" "$dst_file"
+        chmod 600 "$dst_file"
       fi
     done
 
@@ -889,21 +889,21 @@ if is_git_allowed "$CURRENT_DIR"; then
         output=$("$SETUP_SSH" --keys "$KEYS_ARG" 2>&1)
         TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
         if [ -f "$TEMP_CONFIG" ]; then
-          cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-          chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+          cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config"
+          chmod 600 "$GIT_CACHE_DIR/ssh/config"
         else
-          cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-          chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+          cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config"
+          chmod 600 "$GIT_CACHE_DIR/ssh/config"
         fi
       else
-        cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-        chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+        cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config"
+        chmod 600 "$GIT_CACHE_DIR/ssh/config"
       fi
     fi
 
     if [ -f "$HOME/.ssh/known_hosts" ]; then
-      cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-      chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+      cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts"
+      chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts"
     fi
 
     # Ensure all directories have correct permissions (recursive)
@@ -958,7 +958,7 @@ else
             echo "📋 Copying selected credentials to cache..."
             if [ -d "$GIT_CACHE_DIR/ssh" ]; then
               chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-              rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+              rm -rf "$GIT_CACHE_DIR/ssh"
             fi
             mkdir -p "$GIT_CACHE_DIR/ssh"
 
@@ -994,24 +994,24 @@ else
                 output=$("$SETUP_SSH" --keys "$KEYS_ARG" 2>&1)
                 TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
                 if [ -f "$TEMP_CONFIG" ]; then
-                  cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                  chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                  cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config"
+                  chmod 600 "$GIT_CACHE_DIR/ssh/config"
                 else
                   # Fallback to copying full config if setup-ssh-config fails
-                  cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                  chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                  cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config"
+                  chmod 600 "$GIT_CACHE_DIR/ssh/config"
                 fi
               else
                 # Fallback: copy full config
-                cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config"
+                chmod 600 "$GIT_CACHE_DIR/ssh/config"
               fi
             fi
 
             if [ -f "$HOME/.ssh/known_hosts" ]; then
               echo "  → Copying known_hosts..."
-              cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-              chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+              cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts"
+              chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts"
             fi
 
             # Ensure all directories and files have correct permissions (recursive)
@@ -1193,15 +1193,6 @@ fi
 mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
 chmod -R u+w "$HOME_DIR" "$GIT_SHARED_DIR" 2>/dev/null || true
 
-# Selective Cache Isolation (Anonymous Volumes)
-# Use anonymous volumes to "hide" host-poisoned node_modules and caches
-# while keeping configurations and auth data.
-CACHE_MOUNTS=""
-if [[ "$TOOL" == "opencode" ]]; then
-  # Isolate heavy caches and node_modules to prevent Bun/Node conflicts
-  CACHE_MOUNTS="-v /home/agent/.npm -v /home/agent/.cache -v /home/agent/.opencode/node_modules"
-fi
-
 docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   --init \
   --platform "$PLATFORM" \
@@ -1210,7 +1201,6 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $CONFIG_MOUNT \
   $GIT_MOUNTS \
   $NETWORK_OPTIONS \
-  $CACHE_MOUNTS \
   $HOST_ACCESS_ARGS \
   $PORT_MAPPINGS \
   -v "$HOME_DIR":/home/agent \
