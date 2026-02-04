@@ -10,6 +10,14 @@ AI coding tools like Claude, Gemini, and Aider have full access to your filesyst
 
 *Last updated: Tuesday, February 3, 2026*
 
+## ✨ New in v2.2.0: Clipboard Fixes & Screenshot Detection
+
+The **v2.2.0 release** solves the "air-gap" problem for text copying and streamlines screenshot workflows.
+
+-   ✅ **OSC 52 Clipboard Support**: Copy text from inside Linux containers directly to your macOS clipboard (works over SSH too!).
+-   ✅ **Auto-Detect Screenshot Folder**: Automatically finds where your Mac saves screenshots and offers to whitelist it. No more permission errors when dragging images into AI tools.
+-   ✅ **Seamless Drag & Drop**: Just drag screenshots into the terminal window.
+
 ## ✨ New in v2.1.0: Stability & Native Persistence
 
 The **v2.1.0 release** focuses on architectural stability and a more intuitive persistence model.

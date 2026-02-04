@@ -14,14 +14,21 @@ mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 # Create Dockerfile (extends base image for faster builds)
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
 FROM ai-base:latest
+
+# Switch to root only for installing bun globally (needed for the system)
 USER root
-# Install Amp globally into a persistent directory (not shadowed by home)
-RUN mkdir -p /usr/local/lib/amp && \
-    cd /usr/local/lib/amp && \
-    bun init -y && \
-    bun add @sourcegraph/amp && \
-    ln -s /usr/local/lib/amp/node_modules/.bin/amp /usr/local/bin/amp
+RUN npm install -g bun
 USER agent
+
+# Install Amp into user directory
+RUN mkdir -p /home/agent/lib/amp && \
+    cd /home/agent/lib/amp && \
+    bun init -y && \
+    bun add @sourcegraph/amp
+
+# Add the node_modules .bin to PATH
+ENV PATH="/home/agent/lib/amp/node_modules/.bin:${PATH}"
+
 ENTRYPOINT ["amp"]
 EOF
 

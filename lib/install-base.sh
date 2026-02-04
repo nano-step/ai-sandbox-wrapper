@@ -126,6 +126,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas-dev \
     pipx \
     unzip \
+    xclip \
+    wl-clipboard \
     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
     && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath

@@ -334,6 +334,52 @@ fi
 # Set AI_IMAGE_SOURCE=registry in ~/.ai-env to use pre-built images
 AI_IMAGE_SOURCE="${AI_IMAGE_SOURCE:-local}"
 
+# ============================================================================
+# SCREENSHOT DIRECTORY DETECTION (macOS Only)
+# ============================================================================
+if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
+  # 1. Detect location (default to Desktop if key missing)
+  SCREENSHOT_DIR=$(defaults read com.apple.screencapture location 2>/dev/null || echo "$HOME/Desktop")
+  # Expand tilde if present
+  SCREENSHOT_DIR="${SCREENSHOT_DIR/#\~/$HOME}"
+
+  # 2. Check if valid directory
+  if [[ -d "$SCREENSHOT_DIR" ]]; then
+    
+    # 3. Check if ALREADY whitelisted (exact match or parent)
+    IS_WHITELISTED=false
+    while IFS= read -r ws; do
+      # Check if screenshot dir IS a workspace, or IS INSIDE a workspace
+      if [[ "$SCREENSHOT_DIR" == "$ws" ]] || [[ "$SCREENSHOT_DIR" == "$ws"/* ]]; then
+        IS_WHITELISTED=true
+        break
+      fi
+    done < <(read_workspaces)
+
+    # 4. Prompt if not whitelisted
+    if [[ "$IS_WHITELISTED" == "false" ]]; then
+      echo ""
+      echo "📸 Screenshot Directory Detected"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "Location: $SCREENSHOT_DIR"
+      echo "Status:   Not whitelisted"
+      echo ""
+      echo "Whitelisting this folder allows you to drag & drop screenshots into AI tools."
+      echo ""
+      # Use /dev/tty to ensure we read from user even if stdin is redirected
+      read -p "Whitelist screenshots folder? [y/N]: " CONFIRM_SS < /dev/tty
+      
+      if [[ "$CONFIRM_SS" =~ ^[Yy]$ ]]; then
+        add_workspace "$SCREENSHOT_DIR"
+        echo "✅ Added to whitelist."
+      else
+        echo "❌ Skipped."
+      fi
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
+  fi
+fi
+
 if [[ "$AI_IMAGE_SOURCE" == "registry" ]]; then
   IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-${TOOL}:latest"
 else
@@ -1067,6 +1113,58 @@ else
   fi
 fi
 
+# ============================================================================
+# DISPLAY & CLIPBOARD CONFIGURATION
+# ============================================================================
+detect_display_config() {
+  local detected_flags=""
+  local has_display=false
+
+  # 1. X11 Detection
+  if [[ -n "$DISPLAY" ]]; then
+    has_display=true
+    detected_flags="$detected_flags -e DISPLAY=$DISPLAY"
+
+    # Mount X11 socket (common on Linux/macOS with XQuartz)
+    if [[ -d "/tmp/.X11-unix" ]]; then
+      detected_flags="$detected_flags -v /tmp/.X11-unix:/tmp/.X11-unix:rw"
+    fi
+
+    # Handle XAuthority for authentication
+    if [[ -f "$HOME/.Xauthority" ]]; then
+      # Mount read-only for security
+      # Mount to /tmp/.Xauthority to avoid conflict with /home/agent bind mount
+      detected_flags="$detected_flags -e XAUTHORITY=/tmp/.Xauthority -v $HOME/.Xauthority:/tmp/.Xauthority:ro"
+    fi
+
+    # Since we have X11, prefer it over Wayland to avoid clipboard issues in mixed environments
+    # (Many Go apps like atotto/clipboard work better with xclip/X11 than wl-copy/Wayland in Docker)
+    echo "$detected_flags"
+    return
+  fi
+
+  # 2. Wayland Detection
+  if [[ -n "$WAYLAND_DISPLAY" ]]; then
+    has_display=true
+    detected_flags="$detected_flags -e WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
+
+    # Handle XDG_RUNTIME_DIR (needed for Wayland sockets)
+    if [[ -n "$XDG_RUNTIME_DIR" ]]; then
+      # Map host runtime dir to container's /run/user/1001 (agent UID)
+      # ensuring the container can access the socket
+      local container_runtime_dir="/run/user/1001"
+      detected_flags="$detected_flags -e XDG_RUNTIME_DIR=$container_runtime_dir -v $XDG_RUNTIME_DIR:$container_runtime_dir:rw"
+    fi
+  fi
+
+  # Debug log if no display detected (only if debug enabled)
+  if [[ "$has_display" == "false" && "${AI_RUN_DEBUG:-}" == "1" ]]; then
+    echo "🔧 Debug: No display server detected (DISPLAY/WAYLAND_DISPLAY unset). Clipboard integration disabled." >&2
+  fi
+
+  echo "$detected_flags"
+}
+
 # Generate container name based on tool and folder
 # Format: {tool}-{sanitized_folder_name}-{random_suffix}
 generate_container_name() {
@@ -1208,6 +1306,9 @@ if [[ "$TOOL" == "opencode" ]]; then
   CACHE_MOUNTS="-v /home/agent/.npm -v /home/agent/.cache -v /home/agent/.opencode/node_modules"
 fi
 
+# Detect display configuration (clipboard integration)
+DISPLAY_FLAGS=$(detect_display_config)
+
 docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   --init \
   --platform "$PLATFORM" \
@@ -1218,6 +1319,7 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $GIT_MOUNTS \
   $NETWORK_OPTIONS \
   $CACHE_MOUNTS \
+  $DISPLAY_FLAGS \
   $HOST_ACCESS_ARGS \
   $PORT_MAPPINGS \
   -v "$HOME_DIR":/home/agent \
