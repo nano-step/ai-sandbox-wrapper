@@ -1,20 +1,53 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  ## Project: AI Sandbox Wrapper
+  Docker-based security sandbox for AI coding agents. Isolates AI tools (Claude, Gemini, Aider, OpenCode, etc.) from the host system using containers with strict access controls.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  ## Tech Stack
+  - **Shell Scripts (Bash)** - Primary language (~95% of codebase)
+  - **Docker** - Container runtime for isolation
+  - **Node.js** - CLI entry point (bin/cli.js) and npm package distribution
+  - **Bun** - Runtime inside containers (ai-base image)
+  - **GitLab CI** - Automated image builds
+
+  ## Code Conventions
+  - Shell scripts: Start with `#!/usr/bin/env bash` and `set -e`
+  - Always quote variables (`"$VAR"` not `$VAR`)
+  - Install scripts: `lib/install-{tool}.sh`
+  - Dockerfiles: `dockerfiles/{tool}/Dockerfile`
+  - Executables: `bin/{command}`
+  - Use `tput` for terminal UI colors/cursor control
+
+  ## Key Architecture Patterns
+  1. Layered Docker images (ai-base → tool-specific)
+  2. Workspace whitelisting via ~/.ai-sandbox/workspaces
+  3. Security-first: CAP_DROP=ALL, non-root user (agent), read-only FS
+  4. Config hierarchy: Project > Global > Container defaults
+
+  ## Testing
+  - Shell syntax: `bash -n` for all .sh files
+  - Node.js: `node --check` for JS files
+  - CI verification: Each image tested with --version/--help
+
+  ## Git Workflow
+  - Main branch: master
+  - Development: beta (CI triggers here)
+  - Commit style: Conventional commits (feat:, fix:, docs:)
+
+  ## Security Constraints (Non-negotiable)
+  - NEVER mount full home directory
+  - NEVER share SSH keys by default (opt-in only)
+  - No network access to host services by default
+  - All access requires explicit user consent
+
+rules:
+  proposal:
+    - Focus on security implications of any changes
+    - Consider cross-platform compatibility (macOS, Linux, WSL2)
+  specs:
+    - Include security scenarios for any new features
+    - Consider both interactive and non-interactive modes
+  tasks:
+    - Shell script changes should include bash -n validation step
+    - Docker changes should include image rebuild and test steps

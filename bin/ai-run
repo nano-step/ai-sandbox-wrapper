@@ -8,6 +8,7 @@ shift
 SHELL_MODE=false
 NETWORK_FLAG=false
 NETWORK_ARG=""
+EXPOSE_ARG=""
 TOOL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -22,6 +23,13 @@ while [[ $# -gt 0 ]]; do
       # Check if next arg is a network name (not another flag)
       if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
         NETWORK_ARG="$1"
+        shift
+      fi
+      ;;
+    --expose|-e)
+      shift
+      if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+        EXPOSE_ARG="$1"
         shift
       fi
       ;;
@@ -118,7 +126,7 @@ migrate_to_v2() {
   [[ -d "$SANDBOX_DIR/cache" ]] && needs_migration=true
   [[ -d "$SANDBOX_DIR/git-keys" ]] && needs_migration=true
 
-  [[ "$needs_migration" == "false" ]] && { touch "$V2_MARKER"; return 0; }
+  [[ "$needs_migration" == "false" ]] && { mkdir -p "$SANDBOX_DIR" && touch "$V2_MARKER"; return 0; }
 
   echo "🔄 Migrating to v2 folder structure..."
   mkdir -p "$SANDBOX_DIR/tools" "$SANDBOX_DIR/shared/git"
@@ -1213,9 +1221,156 @@ if [[ -n "$TTY_FLAGS" ]]; then
   CONTAINER_NAME="--name $(generate_container_name)"
 fi
 
-# Port exposure configuration
-PORT_MAPPINGS=""
+# ============================================================================
+# WEB COMMAND DETECTION AND PORT EXPOSURE
+# ============================================================================
+
+# Detect if running opencode web command
+detect_opencode_web() {
+  [[ "$TOOL" == "opencode" ]] || return 1
+  for arg in "${TOOL_ARGS[@]}"; do
+    [[ "$arg" == "web" ]] && return 0
+  done
+  return 1
+}
+
+# Parse --port value from TOOL_ARGS (supports --port N and --port=N)
+parse_port_from_args() {
+  local i=0
+  while [[ $i -lt ${#TOOL_ARGS[@]} ]]; do
+    local arg="${TOOL_ARGS[$i]}"
+    if [[ "$arg" == "--port" ]]; then
+      ((i++))
+      if [[ $i -lt ${#TOOL_ARGS[@]} ]]; then
+        echo "${TOOL_ARGS[$i]}"
+        return 0
+      fi
+    elif [[ "$arg" =~ ^--port=(.+)$ ]]; then
+      echo "${BASH_REMATCH[1]}"
+      return 0
+    fi
+    ((i++))
+  done
+  return 1
+}
+
+# Check if --hostname is already in TOOL_ARGS
+has_hostname_arg() {
+  for arg in "${TOOL_ARGS[@]}"; do
+    [[ "$arg" == "--hostname" || "$arg" =~ ^--hostname= ]] && return 0
+  done
+  return 1
+}
+
+# Check if port is in use (lsof with netstat fallback)
+check_port_in_use() {
+  local port="$1"
+  if command -v lsof &>/dev/null; then
+    lsof -i ":$port" &>/dev/null && return 0
+  elif command -v netstat &>/dev/null; then
+    netstat -tuln 2>/dev/null | grep -q ":$port " && return 0
+  else
+    return 2
+  fi
+  
+  docker ps --format "{{.Ports}}" 2>/dev/null | grep -q ":$port->" && return 0
+  return 1
+}
+
+# Get process info for port
+get_port_process_info() {
+  local port="$1"
+  if command -v lsof &>/dev/null; then
+    lsof -i ":$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1 " (PID: " $2 ")"}'
+  elif command -v netstat &>/dev/null; then
+    echo "unknown process"
+  else
+    echo "unknown"
+  fi
+}
+
+# Initialize port list (bash 3.x compatible - no associative arrays)
+EXPOSE_PORTS_LIST=""
+WEB_PORT=""
+
+# Helper: add port to list if not already present
+add_port_to_list() {
+  local port="$1"
+  local source="$2"
+  if [[ ! " $EXPOSE_PORTS_LIST " =~ " $port " ]]; then
+    EXPOSE_PORTS_LIST="$EXPOSE_PORTS_LIST $port"
+    if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
+      echo "🔧 Debug: Added port $port from $source"
+    fi
+  fi
+}
+
+# Parse --expose flag
+if [[ -n "$EXPOSE_ARG" ]]; then
+  IFS=',' read -ra EXPOSE_PORTS <<< "$EXPOSE_ARG"
+  for port in "${EXPOSE_PORTS[@]}"; do
+    port=$(echo "$port" | tr -d ' ')
+    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+      add_port_to_list "$port" "--expose"
+    else
+      echo "⚠️  WARNING: Invalid port number in --expose: $port (skipped)"
+    fi
+  done
+fi
+
+# Web command detection and auto-exposure
+WEB_DETECTED=false
+if detect_opencode_web; then
+  WEB_DETECTED=true
+  WEB_PORT=$(parse_port_from_args)
+  if [[ -z "$WEB_PORT" ]]; then
+    WEB_PORT=4096
+  fi
+  
+  add_port_to_list "$WEB_PORT" "auto-detected"
+  echo "🌐 Detected web command. Auto-exposing port $WEB_PORT."
+  
+  if ! has_hostname_arg; then
+    TOOL_ARGS+=("--hostname" "0.0.0.0")
+  fi
+fi
+
+# Handle legacy PORT environment variable
 if [[ -n "${PORT:-}" ]]; then
+  echo "⚠️  WARNING: PORT environment variable is deprecated. Use --expose flag instead."
+  IFS=',' read -ra PORTS <<< "$PORT"
+  for port in "${PORTS[@]}"; do
+    port=$(echo "$port" | tr -d ' ')
+    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+      add_port_to_list "$port" "PORT env"
+    else
+      echo "⚠️  WARNING: Invalid port number in PORT: $port (skipped)"
+    fi
+  done
+fi
+
+# Trim leading space from port list
+EXPOSE_PORTS_LIST=$(echo "$EXPOSE_PORTS_LIST" | sed 's/^ //')
+
+# Port conflict detection
+PORT_CHECK_AVAILABLE=true
+if ! command -v lsof &>/dev/null && ! command -v netstat &>/dev/null; then
+  echo "⚠️  WARNING: Cannot check port availability (lsof/netstat not found)"
+  PORT_CHECK_AVAILABLE=false
+fi
+
+if [[ "$PORT_CHECK_AVAILABLE" == "true" && -n "$EXPOSE_PORTS_LIST" ]]; then
+  for port in $EXPOSE_PORTS_LIST; do
+    if check_port_in_use "$port"; then
+      PROCESS_INFO=$(get_port_process_info "$port")
+      echo "❌ ERROR: Port $port is already in use by $PROCESS_INFO"
+      exit 1
+    fi
+  done
+fi
+
+# Build PORT_MAPPINGS from EXPOSE_PORTS_LIST
+if [[ -n "$EXPOSE_PORTS_LIST" ]]; then
   PORT_BIND="${PORT_BIND:-localhost}"
   BIND_ADDR="127.0.0.1"
 
@@ -1224,20 +1379,14 @@ if [[ -n "${PORT:-}" ]]; then
     echo "⚠️  WARNING: Ports will be accessible from network (PORT_BIND=all)"
   fi
 
-  IFS=',' read -ra PORTS <<< "$PORT"
-  for port in "${PORTS[@]}"; do
-    # Trim whitespace
-    port=$(echo "$port" | tr -d ' ')
-    # Validate port number (1-65535)
-    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
-      PORT_MAPPINGS="$PORT_MAPPINGS -p $BIND_ADDR:$port:$port"
-    else
-      echo "⚠️  WARNING: Invalid port number: $port (skipped)"
-    fi
+  for port in $EXPOSE_PORTS_LIST; do
+    PORT_MAPPINGS="$PORT_MAPPINGS -p $BIND_ADDR:$port:$port"
   done
 
-  if [[ -n "$PORT_MAPPINGS" ]]; then
-    echo "🔌 Port mappings: ${PORT//,/ }"
+  echo "🔌 Port mappings: $EXPOSE_PORTS_LIST"
+  
+  if [[ "$WEB_DETECTED" == "true" ]]; then
+    echo "🌐 Web UI available at http://localhost:$WEB_PORT"
   fi
 fi
 
@@ -1251,6 +1400,8 @@ if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
   echo "🔧 Debug: PORT='${PORT:-}'"
   echo "🔧 Debug: PORT_BIND='${PORT_BIND:-localhost}'"
   echo "🔧 Debug: PORT_MAPPINGS='$PORT_MAPPINGS'"
+  echo "🔧 Debug: WEB_DETECTED='$WEB_DETECTED'"
+  echo "🔧 Debug: EXPOSE_PORTS_LIST='$EXPOSE_PORTS_LIST'"
 fi
 
 # Prepare command based on mode

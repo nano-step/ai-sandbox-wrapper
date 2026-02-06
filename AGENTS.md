@@ -1,146 +1,228 @@
+# AI Sandbox Wrapper - Agent Instructions
 
-# AI Sandbox Wrapper - Project Knowledge Base
+**Purpose:** Docker-based security sandbox for AI coding agents (Claude, Gemini, Aider, OpenCode, etc.)
 
-**Generated:** 2025-01-23
-**Branch:** Not in git repo context
-**Purpose:** Docker-based security sandbox for AI coding agents
+## Quick Reference
 
-## Overview
+| Task | Command |
+|------|---------|
+| Lint all shell scripts | `npm run lint` |
+| Lint JavaScript | `npm run lint:js` |
+| Run tests | `npm test` |
+| Validate single script | `bash -n path/to/script.sh` |
+| Build base image | `bash lib/install-base.sh` |
+| Build tool image | `bash lib/install-{tool}.sh` |
 
-Security-focused wrapper that runs AI coding tools (Claude, Gemini, Aider, etc.) in isolated Docker containers with strict access controls. Protects host system by whitelisting only specific workspace directories.
-
-## Structure
+## Project Structure
 
 ```
-./
-├── bin/              # Executable wrappers (ai-run, setup-ssh-config)
-├── lib/              # Installation scripts for 15+ AI tools
-├── dockerfiles/      # Container images for each tool
-├── setup.sh          # Main setup script (interactive)
-├── .opencode/        # OpenCode configuration
-├── .specify/         # Spec-driven development config
-└── .github/          # GitHub workflows
+bin/           # Executables (ai-run, cli.js, setup-ssh-config)
+lib/           # Installation scripts (install-{tool}.sh)
+dockerfiles/   # Container images (base/, {tool}/)
+setup.sh       # Interactive installer
 ```
 
-## Where to Look
+## Code Style
 
-| Task | Location | Notes |
-|------|----------|-------|
-| Main setup | `setup.sh` | Interactive installer, handles all setup |
-| Add new tool | `lib/install-{tool}.sh` | Follow pattern: `install-tool.sh` |
-| Container image | `dockerfiles/{tool}/Dockerfile` | Each tool has dedicated Dockerfile |
-| Run tool sandbox | `bin/ai-run` | Entry point for all sandboxed tools |
+### Shell Scripts (95% of codebase)
 
-## Code Map
+**Header:**
+```bash
+#!/usr/bin/env bash
+set -e
+```
 
-**Key Executables:**
+**Variables:**
+- Always quote: `"$VAR"` not `$VAR`
+- Use `${VAR:-default}` for defaults
+- Use `local` in functions: `local my_var="value"`
 
-| File | Purpose | Lines |
-|------|---------|-------|
-| `bin/ai-run` | Main wrapper, handles Docker run commands | ~400 |
-| `setup.sh` | Interactive installer with menu system | ~600 |
-| `lib/ssh-key-selector.sh` | SSH key management for Git access | ~150 |
-| `lib/install-tool.sh` | Template for new tool installations | ~100 |
+**Naming:**
+- UPPER_CASE for constants/env vars: `SANDBOX_DIR`, `PORT_MAPPINGS`
+- lower_case for local vars: `cursor`, `selected`
+- snake_case for functions: `migrate_to_sandbox()`, `check_port_in_use()`
 
-## Conventions
+**Conditionals:**
+```bash
+# Use [[ ]] for tests (not [ ])
+if [[ -n "$VAR" ]]; then
+  # ...
+fi
 
-- **Shell scripts:** Use `set -e` for error handling
-- **Dockerfiles:** Multi-stage builds, non-root user (`agent`)
-- **Naming:** `install-{tool}.sh` for tool installers
-- **Exit codes:** Scripts return non-zero on failure
+# Use && for simple conditionals
+[[ -f "$FILE" ]] && source "$FILE"
+```
 
-## Anti-Patterns (This Project)
+**Arrays:**
+```bash
+# Declare arrays
+TOOL_ARGS=()
+declare -A PORTS_MAP  # Associative array
 
-- ❌ **NEVER** run AI tools without Docker isolation
-- ❌ **NEVER** mount full home directory to containers
-- ❌ **NEVER** share SSH keys by default (opt-in only)
-- ❌ **NEVER** allow network access to host services
+# Iterate
+for item in "${ARRAY[@]}"; do
+  # ...
+done
+```
 
-## Unique Styles
+**Error Handling:**
+- `set -e` at top (exit on error)
+- Use `|| true` to suppress expected failures
+- Warnings: `echo "⚠️  WARNING: message"`
+- Errors: `echo "❌ ERROR: message" && exit 1`
 
-1. **Interactive menus** in setup.sh using tput for terminal control
-2. **Workspace whitelisting** via `~/.ai-sandbox/workspaces` file
-3. **Per-tool Docker images** - each AI tool has dedicated container
-4. **SSH key selector** - user chooses which keys to share per workspace
-5. **Image source selection** - local build vs. GitLab registry
-6. **Consolidated config** - all config in `~/.ai-sandbox/` directory
+**Output Messages:**
+```bash
+echo "🔄 Migrating..."      # Progress
+echo "✅ Done"              # Success
+echo "⚠️  WARNING: ..."     # Warning (continue)
+echo "❌ ERROR: ..."        # Error (usually exit)
+echo "ℹ️  Info message"     # Informational
+```
 
-## Commands
+### JavaScript (bin/cli.js)
+
+**Style:**
+- Node.js CommonJS (`require`, not `import`)
+- 2-space indentation
+- Single quotes for strings
+- No semicolons (project style)
+- camelCase for variables/functions
+
+**Error Handling:**
+```javascript
+try {
+  // ...
+} catch (err) {
+  const message = err && err.message ? err.message : String(err)
+  console.error('❌ Error:', message)
+  process.exit(1)
+}
+```
+
+### Dockerfiles
+
+**Pattern:**
+- Base image: `ai-base` (Debian + Bun runtime)
+- Non-root user: `agent` (UID 1001)
+- Working directory: `/workspace`
+- Multi-stage builds when needed
+
+```dockerfile
+FROM ai-base:latest
+USER agent
+WORKDIR /workspace
+ENTRYPOINT ["tool-name"]
+```
+
+## File Naming Conventions
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Tool installer | `lib/install-{tool}.sh` | `lib/install-claude.sh` |
+| Dockerfile | `dockerfiles/{tool}/Dockerfile` | `dockerfiles/claude/Dockerfile` |
+| Executable | `bin/{command}` | `bin/ai-run` |
+
+## Testing
 
 ```bash
-# Setup (run once)
-./setup.sh
+# Validate shell syntax (required before commit)
+bash -n setup.sh
+bash -n lib/*.sh
+bash -n bin/ai-run
 
-# Run AI tool in sandbox
-ai-run claude
-claude --version  # If symlinked during setup
+# Validate JavaScript
+node --check bin/cli.js
 
-# Add new workspace
-echo '/path/to/project' >> ~/.ai-sandbox/workspaces
+# Full test suite
+npm test
 
-# Configure API keys
-nano ~/.ai-sandbox/env
+# Test Docker image
+docker run --rm ai-{tool}:latest {tool} --version
+docker run --rm ai-{tool}:latest {tool} --help
 ```
 
-## Security Model
+## Security Constraints (Non-negotiable)
 
-- Containers run as non-root `agent` user
-- CAP_DROP=ALL - no elevated privileges
-- Read-only filesystem except `/workspace`
-- Only whitelisted directories accessible
-- API keys passed via environment (explicit opt-in)
-- Git access: opt-in per workspace, key-level control
+- ❌ NEVER mount full home directory to containers
+- ❌ NEVER share SSH keys by default (opt-in only)
+- ❌ NEVER allow network access to host services by default
+- ❌ NEVER run containers as root
+- ✅ All access requires explicit user consent
+- ✅ Containers use CAP_DROP=ALL
 
-## Docker Network Support
+## Key Patterns
 
-**MetaMCP and multi-container setups:**
-- Join networks at runtime using the `-n` / `--network` flag
-- Enables `host.docker.internal` for host service access
-- See [METAMCP_GUIDE.md](METAMCP_GUIDE.md) for detailed integration instructions
-
-### Container Naming
-
-Containers are automatically named based on the project folder:
-
+### Flag Parsing (bin/ai-run)
 ```bash
-# Running in /Users/tamlh/projects/my-awesome-app
-$ ai-run opencode
-# Creates container: opencode-my-awesome-app
-
-# Running in /Users/tamlh/workspace/Test Project
-$ ai-run claude
-# Creates container: claude-test-project
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --flag|-f)
+      FLAG_VAR=true
+      shift
+      ;;
+    --flag-with-arg|-a)
+      shift
+      if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+        ARG_VAR="$1"
+        shift
+      fi
+      ;;
+    *)
+      REMAINING_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
 ```
 
-**Naming format:** `{tool}-{sanitized_folder_name}`
-
-**Rules:**
-- Folder name sanitized (lowercase, alphanumeric, hyphens, underscores)
-- Max 50 characters
-- Spaces converted to hyphens
-- Special characters removed
-
-### Network Management Commands
-
+### Interactive Menus (setup.sh)
 ```bash
-# Interactive network selection
-ai-run opencode -n
-
-# Direct network specification
-ai-run opencode -n metamcp_metamcp-network
-ai-run opencode -n network1,network2
-
-# Saved networks config
-cat ~/.ai-sandbox/config.json
-
-# List AI tool containers (named by project folder)
-docker ps --filter "name=opencode-" --filter "name=claude-"
+tput civis  # Hide cursor
+trap 'tput cnorm' INT TERM EXIT  # Restore on exit
+# Use tput setaf N for colors (2=green, 6=cyan)
+tput sgr0   # Reset colors
 ```
 
-## Gotchas
+### Docker Volume Mounts
+```bash
+VOLUME_MOUNTS="-v $HOST_PATH:$CONTAINER_PATH:delegated"
+```
 
-- Requires Docker running before setup
-- Must run `source ~/.zshrc` after setup to get `ai-run` in PATH
-- API keys not passed to containers unless in `~/.ai-sandbox/env`
-- Git access requires explicit user permission per workspace
-- Dockerfiles use Bun runtime by default (ai-base image)
+## Common Tasks
+
+### Adding a New Tool
+
+1. Create `lib/install-{tool}.sh`:
+```bash
+#!/usr/bin/env bash
+set -e
+# Build logic here
+docker build -t ai-{tool}:latest ...
+```
+
+2. Create `dockerfiles/{tool}/Dockerfile`
+3. Add to `setup.sh` tool selection menu
+4. Add to `.gitlab-ci.yml` for CI builds
+
+### Modifying ai-run
+
+1. Add flag parsing in the `while` loop (lines 13-32)
+2. Add logic after config setup (~line 1216)
+3. Validate: `bash -n bin/ai-run`
+4. Test manually before committing
+
+## Git Workflow
+
+- Main branch: `master`
+- Development: `beta` (CI triggers here)
+- Commit style: Conventional commits (`feat:`, `fix:`, `docs:`)
+
+## Config Locations
+
+| File | Purpose |
+|------|---------|
+| `~/.ai-sandbox/config.json` | Unified config (workspaces, git, networks) |
+| `~/.ai-sandbox/env` | API keys (`KEY=value` format) |
+| `~/.ai-sandbox/workspaces` | Legacy workspace list |
+| `~/.ai-sandbox/tools/{tool}/home/` | Per-tool sandbox home |
