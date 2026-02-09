@@ -4,9 +4,36 @@
 
 Protect your SSH keys, API tokens, and system files while using AI tools that need filesystem access.
 
-*Last updated: February 6, 2026*
+*Last updated: February 9, 2026*
 
-## ✨ New in v2.3.0-beta: Web Mode & Port Exposure
+---
+
+## 📑 Table of Contents
+
+- [What's New](#-whats-new)
+- [Why Use This?](#️-why-use-this)
+- [Quick Start](#-quick-start)
+- [Configuration](#️-configuration)
+  - [API Keys](#api-keys)
+  - [Workspaces](#workspaces)
+  - [Port Exposure](#port-exposure)
+  - [Server Authentication](#server-authentication)
+  - [Network Access](#network-access)
+  - [Git Access](#git-access)
+  - [Clipboard](#clipboard)
+- [Directory Structure](#-directory-structure)
+- [Security Model](#-security-model)
+- [Quick Reference](#-quick-reference)
+- [Troubleshooting](#-troubleshooting)
+- [Other Tools](#-other-tools)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## ✨ What's New
+
+### v2.3.0-beta: Web Mode & Port Exposure
 
 - **Web Auto-Detection**: `opencode web` automatically exposes port 4096 and injects `--hostname 0.0.0.0`
 - **`--expose` Flag**: New way to expose ports (replaces deprecated `PORT` env var)
@@ -23,6 +50,8 @@ opencode web --port 8080
 opencode --expose 3000,5555 web
 ```
 
+---
+
 ## 🛡️ Why Use This?
 
 | Without Sandbox | With AI Sandbox |
@@ -31,6 +60,8 @@ opencode --expose 3000,5555 web
 | Full filesystem access | ✅ Read-only except workspace |
 | Host environment exposed | ✅ API keys passed explicitly |
 | Runs with your permissions | ✅ Non-root, CAP_DROP=ALL |
+
+---
 
 ## 🚀 Quick Start
 
@@ -49,9 +80,12 @@ opencode
 
 During setup: select **opencode**, choose registry images (faster), whitelist your project directories.
 
+---
+
 ## ⚙️ Configuration
 
 ### API Keys
+
 ```bash
 nano ~/.ai-sandbox/env
 ```
@@ -61,6 +95,7 @@ OPENAI_API_KEY=sk-...
 ```
 
 ### Workspaces
+
 ```bash
 npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/my-app
 # Or: echo '/path/to/project' >> ~/.ai-sandbox/workspaces
@@ -94,7 +129,7 @@ Output:
 🌐 Web UI available at http://localhost:4096
 ```
 
-### Server Authentication (OpenCode web/serve)
+### Server Authentication
 
 Control authentication for OpenCode web server:
 
@@ -141,6 +176,24 @@ Git credentials are **not** shared by default. When you run a tool, you'll be pr
   3) No, keep Git disabled (secure default)
 ```
 
+### Clipboard
+
+Clipboard access in containers requires a terminal that supports **OSC52** protocol.
+
+**Supported terminals:** iTerm2, Warp, Kitty, Alacritty, WezTerm, Windows Terminal, Ghostty
+
+**Not supported:** GNOME Terminal, VS Code Terminal, Tilix, Terminator
+
+Test if your terminal supports clipboard:
+```bash
+printf "\033]52;c;$(printf "test" | base64)\a"
+# Press Cmd+V / Ctrl+V - if you see "test", it works
+```
+
+📖 **Full details:** [CLIPBOARD_SUPPORT.md](CLIPBOARD_SUPPORT.md)
+
+---
+
 ## 📁 Directory Structure
 
 ```
@@ -155,6 +208,8 @@ Git credentials are **not** shared by default. When you run a tool, you'll be pr
 Native configs are bind-mounted:
 - `~/.config/opencode` ↔ `/home/agent/.config/opencode`
 - `~/.local/share/opencode` ↔ `/home/agent/.local/share/opencode`
+
+---
 
 ## 🔐 Security Model
 
@@ -177,6 +232,8 @@ Native configs are bind-mounted:
 └─────────────────────────────────────────────────┘
 ```
 
+---
+
 ## 📚 Quick Reference
 
 ```bash
@@ -197,6 +254,8 @@ npx @kokorolx/ai-sandbox-wrapper workspace list
 npx @kokorolx/ai-sandbox-wrapper clean
 ```
 
+---
+
 ## ❓ Troubleshooting
 
 | Issue | Solution |
@@ -205,6 +264,9 @@ npx @kokorolx/ai-sandbox-wrapper clean
 | `Outside whitelisted workspace` | `echo "$(pwd)" >> ~/.ai-sandbox/workspaces` |
 | Port already in use | Stop the process or use different port |
 | Docker not found | Install and start Docker Desktop |
+| Clipboard not working | Use OSC52-compatible terminal. See [CLIPBOARD_SUPPORT.md](CLIPBOARD_SUPPORT.md) |
+
+---
 
 ## 📦 Other Tools
 
@@ -212,9 +274,13 @@ This sandbox also supports **Claude, Gemini, Aider, Kilo, Codex, Amp, Qwen**, an
 
 See [TOOLS.md](TOOLS.md) for the full list and tool-specific configuration.
 
+---
+
 ## 🤝 Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
 
 ## 📝 License
 
