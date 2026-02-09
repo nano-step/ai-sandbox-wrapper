@@ -1,14 +1,65 @@
 #!/usr/bin/env bash
 set -e
 
+# Show help if requested
+show_help() {
+  cat << 'EOF'
+Usage: ai-run <tool> [options] [-- tool-args...]
+
+Run AI tools in a secure Docker sandbox.
+
+Options:
+  -s, --shell              Start interactive shell instead of running tool directly
+  -n, --network [name]     Connect to Docker network(s) (comma-separated or interactive)
+  -e, --expose <ports>     Expose container ports (comma-separated, e.g., 3000,5555)
+  -p, --password <value>   Set OpenCode server password (for web/serve mode)
+      --password-env <VAR> Read OpenCode server password from environment variable
+      --allow-unsecured    Allow OpenCode server to run without password (suppresses warning)
+  -h, --help               Show this help message
+
+OpenCode Server Authentication (web/serve mode only):
+  When running 'opencode web' or 'opencode serve', you can control authentication:
+
+  # Set password directly (visible in process list)
+  ai-run opencode web --password mysecret
+
+  # Read password from environment variable (more secure)
+  MY_PASS=secret ai-run opencode web --password-env MY_PASS
+
+  # Explicitly allow unsecured mode (suppresses warning)
+  ai-run opencode web --allow-unsecured
+
+  Default username: opencode (override with OPENCODE_SERVER_USERNAME env var)
+  Precedence: --password > --password-env > OPENCODE_SERVER_PASSWORD env > interactive prompt
+
+Examples:
+  ai-run claude                           # Run Claude in sandbox
+  ai-run opencode web -e 4096             # Run OpenCode web with port exposed
+  ai-run opencode web -p secret           # Run with password
+  ai-run opencode --shell                 # Start shell, run tool manually
+  ai-run aider -n mynetwork               # Connect to Docker network
+
+Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
+EOF
+  exit 0
+}
+
+# Check for help flag before anything else
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  show_help
+fi
+
 TOOL="$1"
-shift
+shift 2>/dev/null || { echo "❌ ERROR: No tool specified. Use 'ai-run --help' for usage."; exit 1; }
 
 # Parse flags
 SHELL_MODE=false
 NETWORK_FLAG=false
 NETWORK_ARG=""
 EXPOSE_ARG=""
+SERVER_PASSWORD=""
+PASSWORD_ENV_VAR=""
+ALLOW_UNSECURED=false
 TOOL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -32,6 +83,24 @@ while [[ $# -gt 0 ]]; do
         EXPOSE_ARG="$1"
         shift
       fi
+      ;;
+    --password|-p)
+      shift
+      if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+        SERVER_PASSWORD="$1"
+        shift
+      fi
+      ;;
+    --password-env)
+      shift
+      if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+        PASSWORD_ENV_VAR="$1"
+        shift
+      fi
+      ;;
+    --allow-unsecured)
+      ALLOW_UNSECURED=true
+      shift
       ;;
     *)
       TOOL_ARGS+=("$1")
@@ -1222,6 +1291,114 @@ if [[ -n "$TTY_FLAGS" ]]; then
 fi
 
 # ============================================================================
+# OPENCODE SERVER PASSWORD HANDLING
+# ============================================================================
+OPENCODE_PASSWORD_ENV=""
+
+# Detect if running opencode web or serve command
+is_opencode_web_mode() {
+  [[ "$TOOL" == "opencode" ]] || return 1
+  for arg in "${TOOL_ARGS[@]}"; do
+    [[ "$arg" == "web" || "$arg" == "serve" ]] && return 0
+  done
+  return 1
+}
+
+# Resolve password from CLI flags, env vars, or interactive prompt
+# Precedence: --password > --password-env > OPENCODE_SERVER_PASSWORD env > interactive/warning
+resolve_opencode_password() {
+  # 1. CLI --password flag (highest priority)
+  if [[ -n "$SERVER_PASSWORD" ]]; then
+    OPENCODE_PASSWORD_ENV="-e OPENCODE_SERVER_PASSWORD=$SERVER_PASSWORD"
+    return 0
+  fi
+
+  # 2. CLI --password-env flag
+  if [[ -n "$PASSWORD_ENV_VAR" ]]; then
+    local env_value="${!PASSWORD_ENV_VAR:-}"
+    if [[ -z "$env_value" ]]; then
+      echo "❌ ERROR: Environment variable '$PASSWORD_ENV_VAR' is not set"
+      exit 1
+    fi
+    OPENCODE_PASSWORD_ENV="-e OPENCODE_SERVER_PASSWORD=$env_value"
+    return 0
+  fi
+
+  # 3. Existing OPENCODE_SERVER_PASSWORD environment variable
+  if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+    OPENCODE_PASSWORD_ENV="-e OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD"
+    return 0
+  fi
+
+  # 4. --allow-unsecured flag: skip prompt/warning, no password
+  if [[ "$ALLOW_UNSECURED" == "true" ]]; then
+    return 0
+  fi
+
+  # 5. Interactive mode: show menu
+  if [[ -t 0 ]]; then
+    echo ""
+    echo "🔐 OpenCode Web Server Security"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "The web server requires a password for security."
+    echo ""
+    echo "  1) Generate random password (recommended)"
+    echo "  2) Enter custom password"
+    echo "  3) No password (⚠️  unsecured - localhost only)"
+    echo ""
+    read -p "Choice [1-3]: " password_choice
+    
+    case "$password_choice" in
+      1)
+        local generated_password=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
+        OPENCODE_PASSWORD_ENV="-e OPENCODE_SERVER_PASSWORD=$generated_password"
+        echo ""
+        echo "🔑 Generated password: $generated_password"
+        echo "👤 Username: opencode (default)"
+        echo ""
+        echo "To connect from another terminal:"
+        echo "  OPENCODE_SERVER_PASSWORD='$generated_password' opencode attach http://localhost:4096"
+        ;;
+      2)
+        read -sp "Enter password: " custom_password
+        echo ""
+        if [[ -n "$custom_password" ]]; then
+          OPENCODE_PASSWORD_ENV="-e OPENCODE_SERVER_PASSWORD=$custom_password"
+          echo "✅ Custom password set"
+          echo "👤 Username: opencode (default)"
+          echo ""
+          echo "To connect from another terminal:"
+          echo "  OPENCODE_SERVER_PASSWORD='<your-password>' opencode attach http://localhost:4096"
+        else
+          echo "⚠️  Empty password - server will be unsecured"
+        fi
+        ;;
+      *)
+        echo "⚠️  No password set - server is unsecured"
+        echo "   Only use this for localhost access!"
+        ;;
+    esac
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+  else
+    # 6. Non-interactive: show warning
+    echo ""
+    echo "🔐 OpenCode Web Server Security"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "⚠️  OPENCODE_SERVER_PASSWORD not set - server is unsecured"
+    echo "   Set OPENCODE_SERVER_PASSWORD environment variable for security"
+    echo "   Or use --allow-unsecured to suppress this warning"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+  fi
+}
+
+# Run password resolution if in web/serve mode
+if is_opencode_web_mode; then
+  resolve_opencode_password
+fi
+
+# ============================================================================
 # WEB COMMAND DETECTION AND PORT EXPOSURE
 # ============================================================================
 
@@ -1473,6 +1650,7 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $DISPLAY_FLAGS \
   $HOST_ACCESS_ARGS \
   $PORT_MAPPINGS \
+  $OPENCODE_PASSWORD_ENV \
   -v "$HOME_DIR":/home/agent \
   -w "$CURRENT_DIR" \
   --env-file "$ENV_FILE" \

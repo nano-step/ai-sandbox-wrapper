@@ -94,6 +94,30 @@ Output:
 🌐 Web UI available at http://localhost:4096
 ```
 
+### Server Authentication (OpenCode web/serve)
+
+Control authentication for OpenCode web server:
+
+```bash
+# Set password directly (visible in process list)
+ai-run opencode web --password mysecret
+ai-run opencode web -p mysecret
+
+# Read password from environment variable (more secure)
+MY_PASS=secret ai-run opencode web --password-env MY_PASS
+
+# Explicitly allow unsecured mode (suppresses warning)
+ai-run opencode web --allow-unsecured
+```
+
+**Login credentials:**
+- Username: `opencode` (default, override with `OPENCODE_SERVER_USERNAME` env var)
+- Password: your configured password
+
+**Precedence:** `--password` > `--password-env` > `OPENCODE_SERVER_PASSWORD` env > interactive prompt
+
+Without flags, interactive mode shows a menu; non-interactive mode shows a security warning.
+
 **Port Conflict Detection:**
 ```
 ❌ ERROR: Port 3000 is already in use by node (PID: 12345)
