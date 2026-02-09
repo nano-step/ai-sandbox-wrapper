@@ -128,6 +128,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     xclip \
     wl-clipboard \
+    ripgrep \
     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
     && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath
