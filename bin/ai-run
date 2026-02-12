@@ -16,6 +16,7 @@ Options:
       --password-env <VAR> Read OpenCode server password from environment variable
       --allow-unsecured    Allow OpenCode server to run without password (suppresses warning)
   -h, --help               Show this help message
+      --help-env           Show environment variables reference
 
 OpenCode Server Authentication (web/serve mode only):
   When running 'opencode web' or 'opencode serve', you can control authentication:
@@ -44,9 +45,83 @@ EOF
   exit 0
 }
 
+show_help_env() {
+  cat << 'EOF'
+Environment Variables Reference
+===============================
+
+Runtime Environment Variables (inline with ai-run):
+---------------------------------------------------
+  AI_IMAGE_SOURCE=registry    Use pre-built images from GitLab registry instead of local
+                              Example: AI_IMAGE_SOURCE=registry ai-run opencode
+
+  AI_RUN_DEBUG=1              Enable debug output (shows Docker command details)
+                              Example: AI_RUN_DEBUG=1 ai-run opencode
+
+  AI_RUN_PLATFORM=linux/amd64 Force specific platform (useful for cross-arch)
+                              Example: AI_RUN_PLATFORM=linux/amd64 ai-run opencode
+
+  PORT_BIND=all               Bind exposed ports to all interfaces (0.0.0.0) instead of localhost
+                              ⚠️  Security risk - use only when needed
+                              Example: PORT_BIND=all ai-run opencode web -e 4096
+
+  PORT=3000,4000              (Deprecated) Expose ports - use --expose flag instead
+                              Example: PORT=3000 ai-run opencode
+
+Build Environment Variables (inline with setup.sh or install scripts):
+----------------------------------------------------------------------
+  DOCKER_NO_CACHE=1           Force rebuild without Docker cache
+                              Example: DOCKER_NO_CACHE=1 bash setup.sh
+
+  OPENCODE_VERSION=1.1.52     Install specific OpenCode version instead of latest
+                              Example: OPENCODE_VERSION=1.1.52 bash lib/install-opencode.sh
+
+  INSTALL_CHROME_DEVTOOLS_MCP=1  Install Chrome DevTools MCP in base image
+  INSTALL_PLAYWRIGHT_MCP=1       Install Playwright MCP in base image
+  INSTALL_PLAYWRIGHT=1           Install Playwright browser automation
+  INSTALL_RUBY=1                 Install Ruby 3.3.0 + Rails 8.0.2
+  INSTALL_SPEC_KIT=1             Install spec-kit (specify CLI)
+  INSTALL_UX_UI_PROMAX=1         Install uipro CLI
+  INSTALL_OPENSPEC=1             Install OpenSpec CLI
+
+Container Environment Variables (passed to container via ~/.ai-sandbox/env):
+-----------------------------------------------------------------------------
+  ANTHROPIC_API_KEY           Anthropic API key for Claude
+  OPENAI_API_KEY              OpenAI API key
+  OPENCODE_SERVER_PASSWORD    Password for OpenCode web server
+  OPENCODE_SERVER_USERNAME    Username for OpenCode web server (default: opencode)
+  GITHUB_TOKEN                GitHub token for gh CLI authentication
+  GH_TOKEN                    Alternative GitHub token variable
+
+Configuration Files:
+--------------------
+  ~/.ai-sandbox/config.json   Main configuration (workspaces, git, networks, MCP)
+  ~/.ai-sandbox/env           API keys and secrets (KEY=value format)
+  ~/.ai-sandbox/workspaces    Legacy workspace list (one path per line)
+
+Examples:
+  # Debug mode with registry images
+  AI_RUN_DEBUG=1 AI_IMAGE_SOURCE=registry ai-run opencode
+
+  # Rebuild everything from scratch
+  DOCKER_NO_CACHE=1 bash setup.sh --no-cache
+
+  # Install specific OpenCode version
+  OPENCODE_VERSION=1.1.52 bash lib/install-opencode.sh
+
+  # Expose port to network (not just localhost)
+  PORT_BIND=all ai-run opencode web -e 4096
+EOF
+  exit 0
+}
+
 # Check for help flag before anything else
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   show_help
+fi
+
+if [[ "${1:-}" == "--help-env" ]]; then
+  show_help_env
 fi
 
 TOOL="$1"
@@ -1397,6 +1472,273 @@ resolve_opencode_password() {
 if is_opencode_web_mode; then
   resolve_opencode_password
 fi
+
+# ============================================================================
+# MCP AUTO-CONFIGURATION FOR OPENCODE
+# ============================================================================
+
+# Check if MCP tool is installed (from config.json, set during setup.sh)
+is_mcp_installed() {
+  local mcp_tool="$1"
+  if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    jq -e --arg tool "$mcp_tool" '.mcp.installed | index($tool) != null' "$AI_SANDBOX_CONFIG" &>/dev/null
+  else
+    return 1
+  fi
+}
+
+# Check if MCP is already configured in OpenCode config
+is_mcp_configured() {
+  local mcp_name="$1"
+  local config_file="$HOME/.config/opencode/opencode.json"
+  
+  if [[ ! -f "$config_file" ]]; then
+    return 1
+  fi
+  
+  if has_jq; then
+    jq -e --arg name "$mcp_name" '.mcp[$name] // empty' "$config_file" &>/dev/null
+  else
+    grep -q "\"$mcp_name\"" "$config_file" 2>/dev/null
+  fi
+}
+
+# Add MCP configuration to OpenCode config
+add_mcp_config() {
+  local mcp_name="$1"
+  local mcp_command="$2"
+  local force="${3:-false}"
+  local config_file="$HOME/.config/opencode/opencode.json"
+  
+  # Check if already configured and warn user
+  if [[ "$force" != "true" ]] && is_mcp_configured "$mcp_name"; then
+    echo ""
+    echo "  ⚠️  WARNING: '$mcp_name' is already configured!"
+    echo "     Reconfiguring will overwrite your existing settings."
+    echo "     Any custom credentials or options will be lost."
+    read -p "     Are you sure you want to overwrite? [y/N]: " overwrite_choice
+    if [[ ! "$overwrite_choice" =~ ^[Yy]$ ]]; then
+      echo "     ⏭️  Kept existing configuration"
+      return 1
+    fi
+  fi
+  
+  mkdir -p "$(dirname "$config_file")"
+  
+  if [[ ! -f "$config_file" ]]; then
+    # Create new config with MCP
+    echo "{\"mcp\": {\"$mcp_name\": {\"type\": \"local\", \"command\": $mcp_command}}}" > "$config_file"
+  elif has_jq; then
+    # Add MCP to existing config
+    jq --arg name "$mcp_name" --argjson cmd "$mcp_command" \
+      '.mcp = (.mcp // {}) | .mcp[$name] = {"type": "local", "command": $cmd}' \
+      "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+  else
+    echo "⚠️  jq not found. Please manually add MCP configuration to $config_file"
+    return 1
+  fi
+  chmod 600 "$config_file"
+}
+
+# Mark MCP as skipped for this workspace (don't ask again)
+mark_mcp_skipped() {
+  local skip_file="$SANDBOX_DIR/.mcp-skip-$WORKSPACE_MD5"
+  date -Iseconds > "$skip_file" 2>/dev/null || date > "$skip_file"
+}
+
+# Check if MCP prompt was skipped for this workspace
+is_mcp_skipped() {
+  local skip_file="$SANDBOX_DIR/.mcp-skip-$WORKSPACE_MD5"
+  [[ -f "$skip_file" ]]
+}
+
+# Configure MCP tools for OpenCode
+configure_opencode_mcp() {
+  # Only run for opencode tool in interactive mode
+  [[ "$TOOL" != "opencode" ]] && return 0
+  [[ ! -t 0 ]] && return 0
+  
+  local config_file="$HOME/.config/opencode/opencode.json"
+  
+  # Generate workspace hash for skip tracking
+  WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
+  
+  # Check if already skipped for this workspace
+  if is_mcp_skipped; then
+    return 0
+  fi
+  
+  # Detect installed MCP tools (from config.json, set during setup.sh)
+  local chrome_installed=false
+  local playwright_installed=false
+  local chrome_configured=false
+  local playwright_configured=false
+  
+  if is_mcp_installed "chrome-devtools"; then
+    chrome_installed=true
+    is_mcp_configured "chrome-devtools" && chrome_configured=true
+  fi
+  
+  if is_mcp_installed "playwright"; then
+    playwright_installed=true
+    is_mcp_configured "playwright" && playwright_configured=true
+  fi
+  
+  # If no MCP tools installed in image, return
+  if [[ "$chrome_installed" == "false" && "$playwright_installed" == "false" ]]; then
+    return 0
+  fi
+  
+  # If all installed tools are already configured, return silently
+  local all_configured=true
+  [[ "$chrome_installed" == "true" && "$chrome_configured" == "false" ]] && all_configured=false
+  [[ "$playwright_installed" == "true" && "$playwright_configured" == "false" ]] && all_configured=false
+  
+  if [[ "$all_configured" == "true" ]]; then
+    return 0
+  fi
+  
+  # Build lists of configured and unconfigured tools
+  local unconfigured=()
+  local configured=()
+  [[ "$chrome_installed" == "true" && "$chrome_configured" == "false" ]] && unconfigured+=("chrome-devtools")
+  [[ "$chrome_installed" == "true" && "$chrome_configured" == "true" ]] && configured+=("chrome-devtools")
+  [[ "$playwright_installed" == "true" && "$playwright_configured" == "false" ]] && unconfigured+=("playwright")
+  [[ "$playwright_installed" == "true" && "$playwright_configured" == "true" ]] && configured+=("playwright")
+  
+  # Show prompt
+  echo ""
+  echo "🔌 MCP Tools Detected"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  
+  # Show already configured tools
+  if [[ ${#configured[@]} -gt 0 ]]; then
+    echo "Already configured:"
+    for tool in "${configured[@]}"; do
+      case "$tool" in
+        chrome-devtools)
+          echo "  ✓ Chrome DevTools MCP"
+          ;;
+        playwright)
+          echo "  ✓ Playwright MCP"
+          ;;
+      esac
+    done
+    echo ""
+  fi
+  
+  # Show unconfigured tools
+  if [[ ${#unconfigured[@]} -gt 0 ]]; then
+    echo "Not yet configured:"
+    for tool in "${unconfigured[@]}"; do
+      case "$tool" in
+        chrome-devtools)
+          echo "  • Chrome DevTools MCP - browser automation + performance profiling"
+          ;;
+        playwright)
+          echo "  • Playwright MCP - multi-browser automation"
+          ;;
+      esac
+    done
+    echo ""
+  fi
+  
+  echo "Configure MCP tools in OpenCode?"
+  echo "  1) Yes, configure all detected tools"
+  echo "  2) Yes, let me choose which ones"
+  echo "  3) No, skip (I'll configure manually)"
+  echo "  4) No, don't ask again for this workspace"
+  echo ""
+  read -p "Choice [1-4]: " mcp_choice
+  
+  local configured_any=false
+  
+  case "$mcp_choice" in
+    1)
+      # Configure all (both unconfigured and offer to reconfigure configured ones)
+      local all_tools=()
+      [[ "$chrome_installed" == "true" ]] && all_tools+=("chrome-devtools")
+      [[ "$playwright_installed" == "true" ]] && all_tools+=("playwright")
+      
+      for tool in "${all_tools[@]}"; do
+        case "$tool" in
+          chrome-devtools)
+            if add_mcp_config "chrome-devtools" '["chrome-devtools-mcp", "--headless", "--isolated", "--executablePath", "/opt/chromium"]'; then
+              echo "  ✓ Configured Chrome DevTools MCP"
+              configured_any=true
+            fi
+            ;;
+          playwright)
+            if add_mcp_config "playwright" '["npx", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]'; then
+              echo "  ✓ Configured Playwright MCP"
+              configured_any=true
+            fi
+            ;;
+        esac
+      done
+      ;;
+    2)
+      # Let user choose from all installed tools
+      local all_tools=()
+      [[ "$chrome_installed" == "true" ]] && all_tools+=("chrome-devtools")
+      [[ "$playwright_installed" == "true" ]] && all_tools+=("playwright")
+      
+      for tool in "${all_tools[@]}"; do
+        local tool_desc=""
+        local status_hint=""
+        case "$tool" in
+          chrome-devtools)
+            tool_desc="Chrome DevTools MCP (browser automation + DevTools)"
+            is_mcp_configured "chrome-devtools" && status_hint=" [already configured]"
+            ;;
+          playwright)
+            tool_desc="Playwright MCP (multi-browser automation)"
+            is_mcp_configured "playwright" && status_hint=" [already configured]"
+            ;;
+        esac
+        read -p "  Configure $tool_desc$status_hint? [y/N]: " tool_choice
+        if [[ "$tool_choice" =~ ^[Yy]$ ]]; then
+          case "$tool" in
+            chrome-devtools)
+              if add_mcp_config "chrome-devtools" '["chrome-devtools-mcp", "--headless", "--isolated", "--executablePath", "/opt/chromium"]'; then
+                echo "    ✓ Configured"
+                configured_any=true
+              fi
+              ;;
+            playwright)
+              if add_mcp_config "playwright" '["npx", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]'; then
+                echo "    ✓ Configured"
+                configured_any=true
+              fi
+              ;;
+          esac
+        else
+          echo "    ⏭️  Skipped"
+        fi
+      done
+      ;;
+    4)
+      mark_mcp_skipped
+      echo "ℹ️  Won't ask again for this workspace"
+      ;;
+    *)
+      echo "ℹ️  Skipped."
+      ;;
+  esac
+  
+  # Show config file path for easy editing
+  echo ""
+  if [[ "$configured_any" == "true" ]]; then
+    echo "✅ MCP configuration saved!"
+  fi
+  echo "📄 Config file: $config_file"
+  echo "   Edit this file to customize MCP settings or add credentials."
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+}
+
+# Run MCP configuration check for opencode
+configure_opencode_mcp
 
 # ============================================================================
 # WEB COMMAND DETECTION AND PORT EXPOSURE

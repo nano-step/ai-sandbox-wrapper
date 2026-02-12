@@ -104,13 +104,72 @@ RUN gem install rails -v 8.0.2 && gem install bundler && rbenv rehash
 '
 fi
 
+# MCP Tools for AI agent browser automation
+# Both tools share Playwright's Chromium (native ARM64/x86_64, avoids Puppeteer arch issues)
+MCP_BROWSER_INSTALLED=false
+
+if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
+  MCP_BROWSER_INSTALLED=true
+  echo "📦 Installing shared Chromium browser for MCP tools"
+  ADDITIONAL_TOOLS_INSTALL+='RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libdbus-1-3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libxcb1 \
+    libxkbcommon0 \
+    libatspi2.0-0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libdrm2 \
+    libcairo2 \
+    libpango-1.0-0 \
+    libasound2 \
+    fonts-liberation \
+    libappindicator3-1 \
+    libu2f-udev \
+    libvulkan1 \
+    libxshmfence1 \
+    xdg-utils \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+RUN mkdir -p /opt/playwright-browsers && \
+    npm install -g @playwright/mcp@latest && \
+    npx playwright-core install --no-shell chromium && \
+    npx playwright-core install-deps chromium && \
+    chmod -R 777 /opt/playwright-browsers && \
+    ln -sf $(ls -d /opt/playwright-browsers/chromium-*/chrome-linux/chrome | head -1) /opt/chromium
+'
+fi
+
+if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]]; then
+  echo "📦 Chrome DevTools MCP will be installed in base image"
+  ADDITIONAL_TOOLS_INSTALL+='ENV CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1
+RUN npm install -g chrome-devtools-mcp@latest && \
+    touch /opt/.mcp-chrome-devtools-installed
+'
+fi
+
+if [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
+  echo "📦 Playwright MCP will be installed in base image"
+  ADDITIONAL_TOOLS_INSTALL+='RUN touch /opt/.mcp-playwright-installed
+'
+fi
+
 cat > "dockerfiles/base/Dockerfile" <<EOF
 FROM node:22-bookworm-slim
 
 ARG AGENT_UID=1001
 
-# Install common dependencies
-# Note: python3-venv is needed for many tools, unzip for some installers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -133,6 +192,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath
 
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install pnpm globally using npm (not bun, for stability)
 RUN npm install -g pnpm
 
@@ -147,11 +213,11 @@ ${ADDITIONAL_TOOLS_INSTALL}
 # Create workspace
 WORKDIR /workspace
 
-# Non-root user for security
 # Non-root user for security (match host UID)
 RUN useradd -m -u \${AGENT_UID} -d /home/agent agent && \\
     mkdir -p /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config && \\
-    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config /workspace
+    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config /workspace && \\
+    ([ -d /opt/playwright-browsers ] && chown -R agent:agent /opt/playwright-browsers || true)
 USER agent
 ENV HOME=/home/agent
 EOF

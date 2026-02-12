@@ -192,6 +192,47 @@ printf "\033]52;c;$(printf "test" | base64)\a"
 
 📖 **Full details:** [CLIPBOARD_SUPPORT.md](CLIPBOARD_SUPPORT.md)
 
+### MCP Tools (Browser Automation)
+
+During setup, you can optionally install MCP servers for AI agent browser automation:
+
+| Tool | Maintainer | Features | Size |
+|------|------------|----------|------|
+| **Chrome DevTools MCP** | Google | Performance profiling, Core Web Vitals, detailed console/network inspection | ~400MB |
+| **Playwright MCP** | Microsoft | Multi-browser (Chromium), TypeScript code generation, vision mode | ~300MB |
+
+After installation, configure your MCP client (e.g., OpenCode) to use them:
+
+**`~/.config/opencode/opencode.json`:**
+```json
+{
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "chrome-devtools-mcp",
+        "--headless",
+        "--isolated",
+        "--executablePath", "/opt/chromium",
+        "--chromeArg=--no-sandbox",
+        "--chromeArg=--disable-setuid-sandbox"
+      ]
+    },
+    "playwright": {
+      "type": "local",
+      "command": [
+        "npx", "@playwright/mcp@latest",
+        "--headless",
+        "--browser", "chromium",
+        "--no-sandbox"
+      ]
+    }
+  }
+}
+```
+
+> **Note:** The `--no-sandbox` flags are required when running in Docker containers. This is safe because the container itself provides isolation.
+
 ---
 
 ## 📁 Directory Structure

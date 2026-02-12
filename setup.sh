@@ -321,8 +321,21 @@ if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
     echo "Language runtimes selected: ${LANGUAGE_RUNTIMES[*]}"
   fi
 
-  # Combine both categories for processing
-  ADDITIONAL_TOOLS=("${AI_ENHANCEMENT_TOOLS[@]}" "${LANGUAGE_RUNTIMES[@]}")
+  echo ""
+
+  # Category 3: MCP Tools (Browser automation for AI agents)
+  MCP_OPTIONS="chrome-devtools-mcp,playwright-mcp"
+  MCP_DESCS="Google Chrome DevTools MCP - performance profiling + debugging (~400MB),Microsoft Playwright MCP - multi-browser automation (~300MB)"
+
+  multi_select "Select MCP Tools for AI Agent Browser Automation" "$MCP_OPTIONS" "$MCP_DESCS"
+  MCP_TOOLS=("${SELECTED_ITEMS[@]}")
+
+  if [[ ${#MCP_TOOLS[@]} -gt 0 ]]; then
+    echo "MCP tools selected: ${MCP_TOOLS[*]}"
+  fi
+
+  # Combine all categories for processing
+  ADDITIONAL_TOOLS=("${AI_ENHANCEMENT_TOOLS[@]}" "${LANGUAGE_RUNTIMES[@]}" "${MCP_TOOLS[@]}")
 else
   ADDITIONAL_TOOLS=()
   echo "ℹ️  No containerized AI tools selected. Skipping additional tools."
@@ -361,6 +374,8 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_OPENSPEC=0
   INSTALL_PLAYWRIGHT=0
   INSTALL_RUBY=0
+  INSTALL_CHROME_DEVTOOLS_MCP=0
+  INSTALL_PLAYWRIGHT_MCP=0
 
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
     case "$addon" in
@@ -379,11 +394,32 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       ruby)
         INSTALL_RUBY=1
         ;;
+      chrome-devtools-mcp)
+        INSTALL_CHROME_DEVTOOLS_MCP=1
+        ;;
+      playwright-mcp)
+        INSTALL_PLAYWRIGHT_MCP=1
+        ;;
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP
   bash "$SCRIPT_DIR/lib/install-base.sh"
+  
+  # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
+  SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
+  mkdir -p "$HOME/.ai-sandbox"
+  if command -v jq &>/dev/null; then
+    if [[ ! -f "$SANDBOX_CONFIG" ]]; then
+      echo '{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}},"mcp":{"installed":[]}}' > "$SANDBOX_CONFIG"
+    fi
+    MCP_INSTALLED='[]'
+    [[ "$INSTALL_CHROME_DEVTOOLS_MCP" -eq 1 ]] && MCP_INSTALLED=$(echo "$MCP_INSTALLED" | jq '. + ["chrome-devtools"]')
+    [[ "$INSTALL_PLAYWRIGHT_MCP" -eq 1 ]] && MCP_INSTALLED=$(echo "$MCP_INSTALLED" | jq '. + ["playwright"]')
+    jq --argjson mcp "$MCP_INSTALLED" '.mcp.installed = $mcp' "$SANDBOX_CONFIG" > "$SANDBOX_CONFIG.tmp" && mv "$SANDBOX_CONFIG.tmp" "$SANDBOX_CONFIG"
+    chmod 600 "$SANDBOX_CONFIG"
+    echo "✅ MCP tool selections saved to config"
+  fi
 fi
 
 # Install selected tools
@@ -482,6 +518,12 @@ if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
         ;;
       openspec)
         echo "  openspec - OpenSpec CLI for spec-driven development"
+        ;;
+      chrome-devtools-mcp)
+        echo "  chrome-devtools-mcp - Google Chrome DevTools MCP server"
+        ;;
+      playwright-mcp)
+        echo "  @playwright/mcp - Microsoft Playwright MCP server"
         ;;
     esac
   done

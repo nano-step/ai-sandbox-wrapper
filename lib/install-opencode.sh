@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
 set -e
 
-# OpenCode installer: Open-source AI coding tool (Native Go Binary)
 TOOL="opencode"
+OPENCODE_VERSION="${OPENCODE_VERSION:-}"
 
-echo "Installing $TOOL (OpenCode AI - Native Go Binary)..."
+if [[ -n "$OPENCODE_VERSION" ]]; then
+  echo "Installing $TOOL v$OPENCODE_VERSION (OpenCode AI - Native Go Binary)..."
+else
+  echo "Installing $TOOL (OpenCode AI - Native Go Binary, latest)..."
+fi
 
-# Create directories
 mkdir -p "dockerfiles/$TOOL"
 mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home/.cache"
 mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 
-# Create Dockerfile using official native installer (Go binary)
-cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
+if [[ -n "$OPENCODE_VERSION" ]]; then
+  cat > "dockerfiles/$TOOL/Dockerfile" <<EOF
 FROM ai-base:latest
 
 USER root
-# Install OpenCode using official native installer
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION && \\
+    mv /home/agent/.opencode/bin/opencode /usr/local/bin/opencode && \\
+    rm -rf /home/agent/.opencode
+
+USER agent
+ENTRYPOINT ["opencode"]
+EOF
+else
+  cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
+FROM ai-base:latest
+
+USER root
 RUN curl -fsSL https://opencode.ai/install | bash && \
     mv /home/agent/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /home/agent/.opencode
@@ -24,6 +38,7 @@ RUN curl -fsSL https://opencode.ai/install | bash && \
 USER agent
 ENTRYPOINT ["opencode"]
 EOF
+fi
 
 # Build image
 echo "Building Docker image for $TOOL (native binary)..."
