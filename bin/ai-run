@@ -584,8 +584,12 @@ case "$TOOL" in
     mount_tool_config "$HOME/.config/opencode" ".config/opencode"
     mount_tool_config "$HOME/.local/share/opencode" ".local/share/opencode"
     ;;
+  openclaw)
+    mount_tool_config "$HOME/.openclaw" ".openclaw"
+    ;;
   claude)
     mount_tool_config "$HOME/.claude" ".claude"
+    mount_tool_config "$HOME/.ccs" ".ccs"
     ;;
   droid)
     mount_tool_config "$HOME/.config/droid" ".config/droid"
@@ -1978,6 +1982,69 @@ fi
 
 # Detect display configuration (clipboard integration)
 DISPLAY_FLAGS=$(detect_display_config)
+
+# ============================================================================
+# OPENCLAW DOCKER-COMPOSE MODE
+# ============================================================================
+if [[ "$TOOL" == "openclaw" ]]; then
+  OPENCLAW_REPO_DIR="$HOME/.ai-sandbox/tools/openclaw/repo"
+  
+  if [[ ! -d "$OPENCLAW_REPO_DIR" ]]; then
+    echo "❌ ERROR: OpenClaw repository not found at $OPENCLAW_REPO_DIR"
+    echo "   Run: npx @kokorolx/ai-sandbox-wrapper setup"
+    exit 1
+  fi
+  
+  cd "$OPENCLAW_REPO_DIR"
+  
+  OPENCLAW_COMPOSE_FILE="$OPENCLAW_REPO_DIR/docker-compose.yml"
+  OPENCLAW_OVERRIDE_FILE="$OPENCLAW_REPO_DIR/docker-compose.override.yml"
+  
+  echo "🔄 Generating OpenClaw docker-compose override..."
+  
+  cat > "$OPENCLAW_OVERRIDE_FILE" <<EOF
+services:
+  openclaw-gateway:
+    environment:
+      HOME: /home/node
+      OPENCLAW_GATEWAY_TOKEN: \${OPENCLAW_GATEWAY_TOKEN:-}
+    volumes:
+      - $HOME/.openclaw:/home/node/.openclaw
+EOF
+  
+  for workspace in "${WORKSPACES[@]}"; do
+    echo "      - $workspace:$workspace" >> "$OPENCLAW_OVERRIDE_FILE"
+  done
+  
+  cat >> "$OPENCLAW_OVERRIDE_FILE" <<EOF
+    ports:
+      - "18789:18789"
+      - "18790:18790"
+    working_dir: $CURRENT_DIR
+EOF
+  
+  if [[ -n "$NETWORK_OPTIONS" ]]; then
+    echo "    networks:" >> "$OPENCLAW_OVERRIDE_FILE"
+    for net in ${DOCKER_NETWORKS//,/ }; do
+      echo "      - $net" >> "$OPENCLAW_OVERRIDE_FILE"
+    done
+    echo "" >> "$OPENCLAW_OVERRIDE_FILE"
+    echo "networks:" >> "$OPENCLAW_OVERRIDE_FILE"
+    for net in ${DOCKER_NETWORKS//,/ }; do
+      echo "  $net:" >> "$OPENCLAW_OVERRIDE_FILE"
+      echo "    external: true" >> "$OPENCLAW_OVERRIDE_FILE"
+    done
+  fi
+  
+  echo "🚀 Starting OpenClaw with docker-compose..."
+  echo "🌐 Gateway: http://localhost:18789"
+  echo "🌐 Bridge: http://localhost:18790"
+  echo ""
+  
+  exec docker compose -f "$OPENCLAW_COMPOSE_FILE" -f "$OPENCLAW_OVERRIDE_FILE" \
+    --env-file "$ENV_FILE" \
+    up --remove-orphans
+fi
 
 docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   --init \

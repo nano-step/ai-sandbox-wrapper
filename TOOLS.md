@@ -70,6 +70,61 @@ EOF
 
 **API Key:** `ANTHROPIC_API_KEY` in `~/.ai-sandbox/env`
 
+#### Agent Teams (Experimental)
+
+Multi-agent workflows where a lead agent delegates tasks to teammates via shared task lists. Requires Claude Code v2.1.32+.
+
+**Setup:**
+
+Add to `~/.ai-sandbox/env`:
+```
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+```
+
+**Teammate Display Modes:**
+
+| Mode | Env Value | Description |
+|------|-----------|-------------|
+| In-process (default) | `in-process` | All teammates in one terminal. Use Shift+Up/Down to switch. |
+| tmux split-pane | `tmux` | Each teammate gets a dedicated pane. Requires tmux session. |
+
+To change mode, add to `~/.ai-sandbox/env`:
+```
+CLAUDE_CODE_TEAMMATE_MODE=in-process
+```
+
+**Usage:** Run `ai-run claude` normally. Tell Claude to create an agent team and describe the task. Claude spawns teammates and coordinates work.
+
+**State Persistence:** Team configs (`~/.claude/teams/`) and task lists (`~/.claude/tasks/`) persist via the existing `~/.claude` mount.
+
+#### CCS (Claude Code Switch)
+
+Switch between AI providers and manage multiple Claude accounts. CCS is pre-installed in the Claude image.
+
+**Configure providers:**
+```bash
+ai-run claude --shell
+ccs help                              # Show available commands
+ccs config                            # Open configuration dashboard
+```
+
+**Switch providers:**
+```bash
+ccs use openrouter                    # Use OpenRouter (300+ models)
+ccs use ollama                        # Use local Ollama models
+ccs use claude                        # Back to native Claude
+```
+
+**Provider API keys** (add to `~/.ai-sandbox/env`):
+```
+OPENROUTER_API_KEY=sk-or-...
+GOOGLE_API_KEY=...
+```
+
+**CCS config persistence:** CCS stores configuration at `~/.ccs/` which is automatically mounted.
+
+**OAuth Provider Limitations:** OAuth-based providers (Gemini, Copilot, Codex) require browser login on first use. These may not work in headless Docker containers. Use API-key providers (OpenRouter, Ollama, custom endpoints) for reliable container operation. Device-flow OAuth (e.g., Copilot) may work via URL copy-paste but is not guaranteed.
+
 ### Gemini
 
 **Native Config:** `~/.config/gemini/`

@@ -16,6 +16,16 @@ cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
 FROM ai-base:latest
 
 USER root
+# Install tmux for Agent Teams split-pane mode
+RUN apt-get update && apt-get install -y --no-install-recommends tmux && rm -rf /var/lib/apt/lists/*
+
+# Install CCS (Claude Code Switch) for multi-provider model switching
+# Use --ignore-scripts to avoid postinstall failures when HOME=/home/agent but running as root
+RUN npm install -g @kaitranntt/ccs --ignore-scripts && \
+    mkdir -p /home/agent/.ccs && \
+    chown -R agent:agent /home/agent/.ccs && \
+    which ccs && ccs --version
+
 # Install Claude Code using official native installer
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     mkdir -p /usr/local/share && \
@@ -33,10 +43,15 @@ docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-$TOOL:latest" "dockerfiles/$T
 echo "✅ $TOOL installed (Native Binary)"
 echo ""
 echo "Features:"
-echo "  ✓ Official native binary (no Node.js)"
+echo "  ✓ Official native binary"
 echo "  ✓ Claude 3.5 Sonnet/Opus models"
 echo "  ✓ Agentic coding with file editing"
 echo "  ✓ Web search and fetch built-in"
+echo "  ✓ Agent Teams (multi-agent tmux split-pane workflows)"
+echo "  ✓ CCS (Claude Code Switch) for multi-provider model switching"
 echo ""
 echo "Usage: ai-run claude"
-echo "Auth: Set ANTHROPIC_API_KEY environment variable"
+echo "Auth: Set ANTHROPIC_API_KEY in ~/.ai-sandbox/env"
+echo ""
+echo "Agent Teams: Add CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 to ~/.ai-sandbox/env"
+echo "CCS: Run 'ai-run claude --shell' then 'ccs help' to configure providers"
