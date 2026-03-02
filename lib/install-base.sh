@@ -5,6 +5,7 @@ set -e
 mkdir -p "dockerfiles/base"
 
 ADDITIONAL_TOOLS_INSTALL=""
+DOCKERFILE_BUILD_STAGES=""
 
 if [[ "${INSTALL_SPEC_KIT:-0}" -eq 1 ]]; then
   echo "📦 spec-kit will be installed in base image"
@@ -37,6 +38,33 @@ if [[ "${INSTALL_OPENSPEC:-0}" -eq 1 ]]; then
     chmod -R 755 /usr/local/lib/openspec && \
     chmod +x /usr/local/bin/openspec
 '
+fi
+
+if [[ "${INSTALL_RTK:-0}" -eq 1 ]]; then
+  echo "📦 RTK (Rust Token Killer) will be installed in base image (multi-stage build)"
+  DOCKERFILE_BUILD_STAGES+='# Build RTK from source (multi-stage: only binary is kept, Rust toolchain discarded)
+FROM rust:bookworm AS rtk-builder
+RUN cargo install --git https://github.com/rtk-ai/rtk --locked
+'
+  ADDITIONAL_TOOLS_INSTALL+='# Install RTK - token optimizer for AI coding agents (built from source)
+COPY --from=rtk-builder /usr/local/cargo/bin/rtk /usr/local/bin/rtk
+'
+  # Copy RTK OpenCode skills into build context so they can be COPY'd into the image
+  SCRIPT_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  RTK_SKILLS_SRC="${SCRIPT_BASE_DIR}/../skills"
+  if [[ -d "$RTK_SKILLS_SRC/rtk" && -d "$RTK_SKILLS_SRC/rtk-setup" ]]; then
+    mkdir -p "dockerfiles/base/skills/rtk" "dockerfiles/base/skills/rtk-setup"
+    cp "$RTK_SKILLS_SRC/rtk/SKILL.md" "dockerfiles/base/skills/rtk/SKILL.md"
+    cp "$RTK_SKILLS_SRC/rtk-setup/SKILL.md" "dockerfiles/base/skills/rtk-setup/SKILL.md"
+    ADDITIONAL_TOOLS_INSTALL+='# Install RTK OpenCode skills (auto-discovered by OpenCode agents)
+RUN mkdir -p /home/agent/.config/opencode/skills/rtk /home/agent/.config/opencode/skills/rtk-setup
+COPY skills/rtk/SKILL.md /home/agent/.config/opencode/skills/rtk/SKILL.md
+COPY skills/rtk-setup/SKILL.md /home/agent/.config/opencode/skills/rtk-setup/SKILL.md
+'
+    echo "  ✅ RTK OpenCode skills will be copied into container"
+  else
+    echo "  ⚠️  RTK skills not found at $RTK_SKILLS_SRC — skipping skill installation"
+  fi
 fi
 
 if [[ "${INSTALL_PLAYWRIGHT:-0}" -eq 1 ]]; then
@@ -166,6 +194,7 @@ if [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
 fi
 
 cat > "dockerfiles/base/Dockerfile" <<EOF
+${DOCKERFILE_BUILD_STAGES}
 FROM node:22-bookworm-slim
 
 ARG AGENT_UID=1001
@@ -228,4 +257,3 @@ docker build ${DOCKER_NO_CACHE:+--no-cache} \
   --build-arg AGENT_UID="${HOST_UID}" \
   -t "ai-base:latest" "dockerfiles/base"
 echo "✅ Base image built (ai-base:latest)"
-
