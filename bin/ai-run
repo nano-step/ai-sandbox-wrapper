@@ -1137,8 +1137,55 @@ if [[ ${#SELECTED_NETWORKS[@]} -gt 0 ]]; then
   done < <(validate_networks "${SELECTED_NETWORKS[@]}")
 fi
 
+# Detect SSH agent socket (prefer agent forwarding over key copying)
+get_ssh_agent_socket() {
+  # macOS Docker Desktop: special socket path
+  if [[ "$(uname)" == "Darwin" ]]; then
+    local docker_sock="/run/host-services/ssh-auth.sock"
+    # Docker Desktop forwards the host agent to this path inside the VM
+    if [[ -n "$SSH_AUTH_SOCK" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
+      echo "$SSH_AUTH_SOCK"
+      return 0
+    fi
+  fi
+  # Standard SSH agent socket (Linux, macOS with regular agent)
+  if [[ -n "$SSH_AUTH_SOCK" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
+    echo "$SSH_AUTH_SOCK"
+    return 0
+  fi
+  return 1
+}
+
+# Mount SSH agent socket + known_hosts/config (no private keys)
+setup_ssh_agent_forwarding() {
+  local agent_sock="$1"
+  
+  # Mount the agent socket
+  GIT_MOUNTS="$GIT_MOUNTS -v $agent_sock:/ssh-agent"
+  SSH_AGENT_ENV="-e SSH_AUTH_SOCK=/ssh-agent"
+  
+  # Still need known_hosts and config for host verification
+  mkdir -p "$GIT_CACHE_DIR/ssh"
+  
+  if [ -f "$HOME/.ssh/known_hosts" ]; then
+    cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+    chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+  fi
+  
+  if [ -f "$HOME/.ssh/config" ]; then
+    cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+    chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+  fi
+  
+  chmod 700 "$GIT_CACHE_DIR/ssh"
+  GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
+  
+  echo "🔒 SSH agent forwarding active (keys never enter container)"
+}
+
 # Git access control (opt-in per workspace)
 GIT_MOUNTS=""
+SSH_AGENT_ENV=""
 GIT_ALLOWED_FILE="$SANDBOX_DIR/git-allowed"
 GIT_CACHE_DIR="$GIT_SHARED_DIR"  # V2: Uses shared/git instead of cache/git
 touch "$GIT_ALLOWED_FILE" 2>/dev/null || true
@@ -1204,68 +1251,79 @@ if is_git_allowed "$CURRENT_DIR" || is_git_fetch_only "$CURRENT_DIR" || [[ "$GIT
   SAVED_KEYS_FILE="$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"  # V2: Uses shared/git/keys/
 
   if [ -f "$SAVED_KEYS_FILE" ]; then
-    # Use previously saved key selection
-    echo "📋 Syncing Git credentials..."
-    if [ -d "$GIT_CACHE_DIR/ssh" ]; then
-      chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-      rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-    fi
-    mkdir -p "$GIT_CACHE_DIR/ssh"
-
-    # Read saved keys and copy them
-    SAVED_KEYS=()
-    while IFS= read -r key; do
-      [ -n "$key" ] && SAVED_KEYS+=("$key")
-    done < "$SAVED_KEYS_FILE"
-
-    for key in "${SAVED_KEYS[@]}"; do
-      [ -z "$key" ] && continue
-      src_file="$HOME/.ssh/$key"
-      dst_file="$GIT_CACHE_DIR/ssh/$key"
-
-      dst_dir=$(dirname "$dst_file")
-      mkdir -p "$dst_dir" 2>/dev/null || true
-      chmod 700 "$dst_dir" 2>/dev/null || true
-
-      if [ -f "$src_file" ]; then
-        cp "$src_file" "$dst_file" 2>/dev/null || true
-        chmod 600 "$dst_file" 2>/dev/null || true
+    # Try SSH agent forwarding first (more secure)
+    AGENT_SOCK=""
+    if AGENT_SOCK=$(get_ssh_agent_socket); then
+      echo "📋 Setting up Git credentials (agent forwarding)..."
+      setup_ssh_agent_forwarding "$AGENT_SOCK"
+      echo "✅ Git credentials ready (agent forwarding)"
+    else
+      # Fallback: copy key files (less secure)
+      echo "📋 Syncing Git credentials..."
+      echo "⚠️  SSH agent not detected. Falling back to key file mounting."
+      echo "   For better security, start ssh-agent: eval \"\$(ssh-agent -s)\" && ssh-add"
+      
+      if [ -d "$GIT_CACHE_DIR/ssh" ]; then
+        chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+        rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
       fi
-    done
+      mkdir -p "$GIT_CACHE_DIR/ssh"
 
-    # Copy filtered SSH config (only hosts needed for this repo)
-    if [ -f "$HOME/.ssh/config" ]; then
-      SETUP_SSH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup-ssh-config"
-      if [ -x "$SETUP_SSH" ]; then
-        # Join SAVED_KEYS into a comma-separated string for --keys
-        KEYS_ARG=$(IFS=,; echo "${SAVED_KEYS[*]}")
-        output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
-        TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
-        if [ -f "$TEMP_CONFIG" ]; then
-          cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-          chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+      # Read saved keys and copy them
+      SAVED_KEYS=()
+      while IFS= read -r key; do
+        [ -n "$key" ] && SAVED_KEYS+=("$key")
+      done < "$SAVED_KEYS_FILE"
+
+      for key in "${SAVED_KEYS[@]}"; do
+        [ -z "$key" ] && continue
+        src_file="$HOME/.ssh/$key"
+        dst_file="$GIT_CACHE_DIR/ssh/$key"
+
+        dst_dir=$(dirname "$dst_file")
+        mkdir -p "$dst_dir" 2>/dev/null || true
+        chmod 700 "$dst_dir" 2>/dev/null || true
+
+        if [ -f "$src_file" ]; then
+          cp "$src_file" "$dst_file" 2>/dev/null || true
+          chmod 600 "$dst_file" 2>/dev/null || true
+        fi
+      done
+
+      # Copy filtered SSH config (only hosts needed for this repo)
+      if [ -f "$HOME/.ssh/config" ]; then
+        SETUP_SSH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup-ssh-config"
+        if [ -x "$SETUP_SSH" ]; then
+          # Join SAVED_KEYS into a comma-separated string for --keys
+          KEYS_ARG=$(IFS=,; echo "${SAVED_KEYS[*]}")
+          output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
+          TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
+          if [ -f "$TEMP_CONFIG" ]; then
+            cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+            chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+          else
+            cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+            chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+          fi
         else
           cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
           chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
         fi
-      else
-        cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-        chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
       fi
+
+      if [ -f "$HOME/.ssh/known_hosts" ]; then
+        cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+        chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+      fi
+
+      # Ensure all directories have correct permissions (recursive)
+      chmod 700 "$GIT_CACHE_DIR/ssh"
+      find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
+      find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
+
+      GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
+      echo "✅ Git credentials synced"
     fi
-
-    if [ -f "$HOME/.ssh/known_hosts" ]; then
-      cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-      chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-    fi
-
-    # Ensure all directories have correct permissions (recursive)
-    chmod 700 "$GIT_CACHE_DIR/ssh"
-    find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
-    find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
-
-    GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
-    echo "✅ Git credentials synced"
   fi
 
   if [ -f "$HOME/.gitconfig" ]; then
@@ -1296,136 +1354,179 @@ else
 
     case "$git_choice" in
       1|2|4|5)
-        # Interactive SSH key selection
-        echo ""
-        echo "🔑 SSH Key Selection"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-        # Source the SSH key selector library
-        # Resolve symlink to get actual project directory
-        SCRIPT_PATH="${BASH_SOURCE[0]}"
-        while [ -L "$SCRIPT_PATH" ]; do
-          SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-          SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
-          [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
-        done
-        SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-        source "$SCRIPT_DIR/../lib/ssh-key-selector.sh"
-
-        # Let user select keys
-        if select_ssh_keys; then
-          if [ ${#SELECTED_SSH_KEYS[@]} -gt 0 ]; then
-            echo "📋 Copying selected credentials to cache..."
-            if [ -d "$GIT_CACHE_DIR/ssh" ]; then
-              chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-              rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+        # Try SSH agent forwarding first (more secure - no key selection needed)
+        AGENT_SOCK=""
+        if AGENT_SOCK=$(get_ssh_agent_socket); then
+          echo ""
+          echo "🔒 SSH Agent Forwarding"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          setup_ssh_agent_forwarding "$AGENT_SOCK"
+          
+          # Copy gitconfig
+          if [ -f "$HOME/.gitconfig" ]; then
+            cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
+          fi
+          
+          if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
+            GIT_FETCH_ONLY_MODE=true
+          fi
+          
+          # Save workspace preference (same logic as before)
+          if [ "$git_choice" = "2" ]; then
+            echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
+            if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+              jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+              chmod 600 "$AI_SANDBOX_CONFIG"
             fi
-            mkdir -p "$GIT_CACHE_DIR/ssh"
+            echo "✅ Git access enabled and saved for: $CURRENT_DIR"
+          elif [ "$git_choice" = "5" ]; then
+            if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+              jq --arg ws "$CURRENT_DIR" '.git.fetchOnlyWorkspaces = ((.git.fetchOnlyWorkspaces // []) + [$ws] | unique)' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+              chmod 600 "$AI_SANDBOX_CONFIG"
+            fi
+            echo "✅ Git fetch-only access enabled and saved for: $CURRENT_DIR"
+          elif [ "$git_choice" = "4" ]; then
+            echo "✅ Git fetch-only access enabled for this session"
+          else
+            echo "✅ Git access enabled for this session"
+          fi
+        else
+          # No SSH agent — fall back to key selection + copy
+          echo ""
+          echo "⚠️  SSH agent not detected. Using key file mounting."
+          echo "   For better security: eval \"\$(ssh-agent -s)\" && ssh-add"
+          echo ""
+          echo "🔑 SSH Key Selection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            # Copy selected SSH keys (preserve directory structure exactly)
-            for key in "${SELECTED_SSH_KEYS[@]}"; do
-              echo "  → Copying $key..."
-              src_file="$HOME/.ssh/$key"
-              dst_file="$GIT_CACHE_DIR/ssh/$key"
+          # Source the SSH key selector library
+          # Resolve symlink to get actual project directory
+          SCRIPT_PATH="${BASH_SOURCE[0]}"
+          while [ -L "$SCRIPT_PATH" ]; do
+            SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+            SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+            [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+          done
+          SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+          source "$SCRIPT_DIR/../lib/ssh-key-selector.sh"
 
-              # Create parent directory with correct permissions
-              dst_dir=$(dirname "$dst_file")
-              mkdir -p "$dst_dir"
-              chmod 700 "$dst_dir"
-
-              # Copy the file and set permissions
-              if [ -f "$src_file" ]; then
-                cp "$src_file" "$dst_file"
-                chmod 600 "$dst_file"
-              else
-                echo "    ⚠️  Warning: $src_file not found, skipping"
+          # Let user select keys
+          if select_ssh_keys; then
+            if [ ${#SELECTED_SSH_KEYS[@]} -gt 0 ]; then
+              echo "📋 Copying selected credentials to cache..."
+              if [ -d "$GIT_CACHE_DIR/ssh" ]; then
+                chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+                rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
               fi
-            done
+              mkdir -p "$GIT_CACHE_DIR/ssh"
 
-            # Copy filtered SSH config (only hosts needed for this repo)
-            if [ -f "$HOME/.ssh/config" ]; then
-              echo "  → Generating filtered SSH config..."
-              # Run setup-ssh-config to get filtered config
-              SETUP_SSH="$SCRIPT_DIR/setup-ssh-config"
-              if [ -x "$SETUP_SSH" ]; then
-                # Join SELECTED_SSH_KEYS into a comma-separated string for --keys
-                KEYS_ARG=$(IFS=,; echo "${SELECTED_SSH_KEYS[*]}")
-                # Run it and capture the filtered config path
-                output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
-                TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
-                if [ -f "$TEMP_CONFIG" ]; then
-                  cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                  chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+              # Copy selected SSH keys (preserve directory structure exactly)
+              for key in "${SELECTED_SSH_KEYS[@]}"; do
+                echo "  → Copying $key..."
+                src_file="$HOME/.ssh/$key"
+                dst_file="$GIT_CACHE_DIR/ssh/$key"
+
+                # Create parent directory with correct permissions
+                dst_dir=$(dirname "$dst_file")
+                mkdir -p "$dst_dir"
+                chmod 700 "$dst_dir"
+
+                # Copy the file and set permissions
+                if [ -f "$src_file" ]; then
+                  cp "$src_file" "$dst_file"
+                  chmod 600 "$dst_file"
                 else
-                  # Fallback to copying full config if setup-ssh-config fails
+                  echo "    ⚠️  Warning: $src_file not found, skipping"
+                fi
+              done
+
+              # Copy filtered SSH config (only hosts needed for this repo)
+              if [ -f "$HOME/.ssh/config" ]; then
+                echo "  → Generating filtered SSH config..."
+                # Run setup-ssh-config to get filtered config
+                SETUP_SSH="$SCRIPT_DIR/setup-ssh-config"
+                if [ -x "$SETUP_SSH" ]; then
+                  # Join SELECTED_SSH_KEYS into a comma-separated string for --keys
+                  KEYS_ARG=$(IFS=,; echo "${SELECTED_SSH_KEYS[*]}")
+                  # Run it and capture the filtered config path
+                  output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
+                  TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
+                  if [ -f "$TEMP_CONFIG" ]; then
+                    cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                    chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                  else
+                    # Fallback to copying full config if setup-ssh-config fails
+                    cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                    chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                  fi
+                else
+                  # Fallback: copy full config
                   cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
                   chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
                 fi
+              fi
+
+              if [ -f "$HOME/.ssh/known_hosts" ]; then
+                echo "  → Copying known_hosts..."
+                cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+                chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+              fi
+
+              # Ensure all directories and files have correct permissions (recursive)
+              chmod 700 "$GIT_CACHE_DIR/ssh"
+              find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
+              find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
+
+              GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
+
+              # Copy gitconfig
+              if [ -f "$HOME/.gitconfig" ]; then
+                echo "  → Copying .gitconfig..."
+                cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
+              fi
+
+              if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
+                GIT_FETCH_ONLY_MODE=true
+              fi
+              if [ "$git_choice" = "2" ]; then
+                # Save workspace and selected keys for future sessions
+                echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
+                # Also save to config.json
+                if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+                  jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+                  chmod 600 "$AI_SANDBOX_CONFIG"
+                fi
+                # Save selected keys (one per line for easier parsing)
+                WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
+                mkdir -p "$GIT_SHARED_DIR/keys"
+                printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
+                echo "✅ Git access enabled and saved for: $CURRENT_DIR"
+              elif [ "$git_choice" = "5" ]; then
+                # Save workspace to fetchOnlyWorkspaces
+                if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+                  jq --arg ws "$CURRENT_DIR" '.git.fetchOnlyWorkspaces = ((.git.fetchOnlyWorkspaces // []) + [$ws] | unique)' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+                  chmod 600 "$AI_SANDBOX_CONFIG"
+                fi
+                # Save selected keys (one per line for easier parsing)
+                WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
+                mkdir -p "$GIT_SHARED_DIR/keys"
+                printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
+                echo "✅ Git fetch-only access enabled and saved for: $CURRENT_DIR"
+              elif [ "$git_choice" = "4" ]; then
+                echo "✅ Git fetch-only access enabled for this session"
               else
-                # Fallback: copy full config
-                cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                echo "✅ Git access enabled for this session"
               fi
-            fi
-
-            if [ -f "$HOME/.ssh/known_hosts" ]; then
-              echo "  → Copying known_hosts..."
-              cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-              chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-            fi
-
-            # Ensure all directories and files have correct permissions (recursive)
-            chmod 700 "$GIT_CACHE_DIR/ssh"
-            find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
-            find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
-
-            GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
-
-            # Copy gitconfig
-            if [ -f "$HOME/.gitconfig" ]; then
-              echo "  → Copying .gitconfig..."
-              cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
-            fi
-
-            if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
-              GIT_FETCH_ONLY_MODE=true
-            fi
-            if [ "$git_choice" = "2" ]; then
-              # Save workspace and selected keys for future sessions
-              echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
-              # Also save to config.json
-              if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
-                jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
-                  && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
-                chmod 600 "$AI_SANDBOX_CONFIG"
-              fi
-              # Save selected keys (one per line for easier parsing)
-              WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-              mkdir -p "$GIT_SHARED_DIR/keys"
-              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
-              echo "✅ Git access enabled and saved for: $CURRENT_DIR"
-            elif [ "$git_choice" = "5" ]; then
-              # Save workspace to fetchOnlyWorkspaces
-              if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
-                jq --arg ws "$CURRENT_DIR" '.git.fetchOnlyWorkspaces = ((.git.fetchOnlyWorkspaces // []) + [$ws] | unique)' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
-                  && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
-                chmod 600 "$AI_SANDBOX_CONFIG"
-              fi
-              # Save selected keys (one per line for easier parsing)
-              WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-              mkdir -p "$GIT_SHARED_DIR/keys"
-              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
-              echo "✅ Git fetch-only access enabled and saved for: $CURRENT_DIR"
-            elif [ "$git_choice" = "4" ]; then
-              echo "✅ Git fetch-only access enabled for this session"
             else
-              echo "✅ Git access enabled for this session"
+              echo "⚠️  No SSH keys selected. Git access disabled."
             fi
           else
-            echo "⚠️  No SSH keys selected. Git access disabled."
+            echo "⚠️  SSH key selection cancelled. Git access disabled."
           fi
-        else
-          echo "⚠️  SSH key selection cancelled. Git access disabled."
         fi
         ;;
       *)
@@ -2250,6 +2351,7 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $CONFIG_MOUNT \
   $TOOL_CONFIG_MOUNTS \
   $GIT_MOUNTS \
+  $SSH_AGENT_ENV \
   $NETWORK_OPTIONS \
   $DISPLAY_FLAGS \
   $HOST_ACCESS_ARGS \
