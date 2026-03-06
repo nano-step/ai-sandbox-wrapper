@@ -128,7 +128,7 @@ ENV PATH=$RBENV_ROOT/bin:$RBENV_ROOT/shims:$PATH
 
 RUN rbenv install 3.3.0 && rbenv global 3.3.0 && rbenv rehash
 
-RUN gem install rails -v 8.0.2 && gem install bundler && rbenv rehash
+RUN gem install rails -v 8.0.2 && gem install bundler solargraph && rbenv rehash
 '
 fi
 
@@ -217,9 +217,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xclip \
     wl-clipboard \
     ripgrep \
+    tmux \
+    fd-find \
+    sqlite3 \
+    poppler-utils \
+    qpdf \
+    tesseract-ocr \
     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
     && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath
+
+# Install Python PDF processing tools for PDF skill
+RUN pip3 install --no-cache-dir --break-system-packages pypdf pdfplumber reportlab pytesseract pdf2image
 
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -235,7 +244,7 @@ RUN npm install -g bun
 RUN npm install -g pnpm
 
 # Install TypeScript and LSP tools using npm
-RUN npm install -g typescript typescript-language-server
+RUN npm install -g typescript typescript-language-server pyright vscode-langservers-extracted
 
 # Verify installations
 RUN node --version && npm --version && pnpm --version && tsc --version
