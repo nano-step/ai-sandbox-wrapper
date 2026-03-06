@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# Qwen Code installer: Alibaba's AI coding agent
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/qwen && \
+    cd /usr/local/lib/qwen && \
+    bun init -y && \
+    bun add @qwen-code/qwen-code@latest tiktoken && \
+    ln -s /usr/local/lib/qwen/node_modules/.bin/qwen /usr/local/bin/qwen
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="qwen"
 
 echo "Installing $TOOL (Alibaba Qwen Code CLI)..."

@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# Jules CLI installer: Google's AI coding assistant
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/jules && \
+    cd /usr/local/lib/jules && \
+    bun init -y && \
+    bun add @google/jules && \
+    ln -s /usr/local/lib/jules/node_modules/.bin/jules /usr/local/bin/jules
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="jules"
 
 echo "Installing $TOOL (Google Jules CLI)..."

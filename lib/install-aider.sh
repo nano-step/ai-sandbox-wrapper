@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
-# Aider installer: Python-based AI coding assistant
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER agent
+RUN python3 -m pip install --break-system-packages aider-install && aider-install
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="aider"
 
 echo "Installing $TOOL (Python-based AI pair programmer)..."

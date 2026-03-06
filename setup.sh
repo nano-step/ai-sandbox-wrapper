@@ -14,9 +14,16 @@ multi_select() {
   local title="$1"
   IFS=',' read -ra options <<< "$2"
   IFS=',' read -ra descriptions <<< "$3"
+  local preselected="${4:-}"
   local cursor=0
   local selected=()
-  for ((i=0; i<${#options[@]}; i++)); do selected[i]=0; done
+  for ((i=0; i<${#options[@]}; i++)); do
+    if [[ -n "$preselected" ]] && echo ",$preselected," | grep -q ",${options[$i]},"; then
+      selected[i]=1
+    else
+      selected[i]=0
+    fi
+  done
 
   # Use tput for better terminal control
   tput civis # Hide cursor
@@ -277,8 +284,14 @@ WORKSPACE="${WORKSPACES[0]}"
 TOOL_OPTIONS="amp,opencode,openclaw,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
 TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
 
+# Pre-select previously installed tools
+PRESELECTED_TOOLS=""
+if command -v jq &>/dev/null && [[ -f "$SANDBOX_DIR/config.json" ]]; then
+  PRESELECTED_TOOLS=$(jq -r '.tools.installed // [] | join(",")' "$SANDBOX_DIR/config.json" 2>/dev/null || echo "")
+fi
+
 # Interactive multi-select
-multi_select "Select AI Tools to Install" "$TOOL_OPTIONS" "$TOOL_DESCS"
+multi_select "Select AI Tools to Install" "$TOOL_OPTIONS" "$TOOL_DESCS" "$PRESELECTED_TOOLS"
 TOOLS=("${SELECTED_ITEMS[@]}")
 
 if [[ ${#TOOLS[@]} -eq 0 ]]; then
@@ -298,8 +311,8 @@ done
 echo ""
 if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
   # Category 1: AI Enhancement Tools (spec-driven development, UI/UX, browser automation)
-  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright"
-  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB)"
+  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk"
+  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB)"
 
   multi_select "Select AI Enhancement Tools (installed in containers)" "$AI_TOOL_OPTIONS" "$AI_TOOL_DESCS"
   AI_ENHANCEMENT_TOOLS=("${SELECTED_ITEMS[@]}")
@@ -376,6 +389,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_RUBY=0
   INSTALL_CHROME_DEVTOOLS_MCP=0
   INSTALL_PLAYWRIGHT_MCP=0
+  INSTALL_RTK=0
 
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
     case "$addon" in
@@ -400,11 +414,13 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       playwright-mcp)
         INSTALL_PLAYWRIGHT_MCP=1
         ;;
+      rtk)
+        INSTALL_RTK=1
+        ;;
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP
-  bash "$SCRIPT_DIR/lib/install-base.sh"
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
@@ -422,56 +438,39 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   fi
 fi
 
-# Install selected tools
+TOOLS_CSV=$(IFS=','; echo "${TOOLS[*]}")
+TOOLS="$TOOLS_CSV" \
+  INSTALL_SPEC_KIT="$INSTALL_SPEC_KIT" \
+  INSTALL_UX_UI_PROMAX="$INSTALL_UX_UI_PROMAX" \
+  INSTALL_OPENSPEC="$INSTALL_OPENSPEC" \
+  INSTALL_PLAYWRIGHT="$INSTALL_PLAYWRIGHT" \
+  INSTALL_RUBY="$INSTALL_RUBY" \
+  INSTALL_CHROME_DEVTOOLS_MCP="$INSTALL_CHROME_DEVTOOLS_MCP" \
+  INSTALL_PLAYWRIGHT_MCP="$INSTALL_PLAYWRIGHT_MCP" \
+  INSTALL_RTK="$INSTALL_RTK" \
+  bash "$SCRIPT_DIR/lib/build-sandbox.sh"
+
+OLD_IMAGES=()
 for tool in "${TOOLS[@]}"; do
-  case $tool in
-    amp)
-      bash "$SCRIPT_DIR/lib/install-amp.sh"
-      ;;
-    opencode)
-      bash "$SCRIPT_DIR/lib/install-opencode.sh"
-      ;;
-    openclaw)
-      bash "$SCRIPT_DIR/lib/install-openclaw.sh"
-      ;;
-    droid)
-      bash "$SCRIPT_DIR/lib/install-droid.sh"
-      ;;
-    claude)
-      bash "$SCRIPT_DIR/lib/install-claude.sh"
-      ;;
-     gemini)
-       bash "$SCRIPT_DIR/lib/install-gemini.sh"
-       ;;
-     aider)
-       bash "$SCRIPT_DIR/lib/install-aider.sh"
-       ;;
-     kilo)
-      bash "$SCRIPT_DIR/lib/install-kilo.sh"
-      ;;
-    qwen)
-      bash "$SCRIPT_DIR/lib/install-qwen.sh"
-      ;;
-    codex)
-      bash "$SCRIPT_DIR/lib/install-codex.sh"
-      ;;
-    qoder)
-      bash "$SCRIPT_DIR/lib/install-qoder.sh"
-      ;;
-    auggie)
-      bash "$SCRIPT_DIR/lib/install-auggie.sh"
-      ;;
-    codebuddy)
-      bash "$SCRIPT_DIR/lib/install-codebuddy.sh"
-      ;;
-    jules)
-      bash "$SCRIPT_DIR/lib/install-jules.sh"
-      ;;
-    shai)
-      bash "$SCRIPT_DIR/lib/install-shai.sh"
-      ;;
-  esac
+  if docker image inspect "ai-${tool}:latest" &>/dev/null; then
+    OLD_IMAGES+=("ai-${tool}:latest")
+  fi
 done
+
+if [[ ${#OLD_IMAGES[@]} -gt 0 ]]; then
+  echo ""
+  echo "🧹 Found old per-tool images that are no longer needed:"
+  for img in "${OLD_IMAGES[@]}"; do
+    echo "  - $img"
+  done
+  if [[ -t 0 ]]; then
+    read -p "Remove old images to free disk space? [y/N]: " CLEANUP_CHOICE
+    if [[ "$CLEANUP_CHOICE" =~ ^[Yy]$ ]]; then
+      docker rmi "${OLD_IMAGES[@]}" 2>/dev/null || true
+      echo "✅ Old images removed"
+    fi
+  fi
+fi
 
 # Additional tools are installed in base image (no host installation)
 
@@ -493,6 +492,10 @@ for tool in "${TOOLS[@]}"; do
   fi
 done
 
+if ! grep -q 'alias ai=' "$SHELL_RC" 2>/dev/null; then
+  echo 'alias ai="ai-run"' >> "$SHELL_RC"
+fi
+
 # Additional tools don't need host aliases (only in containers)
 
 # Verify permissions
@@ -503,10 +506,14 @@ fi
 
 echo "✅ Setup complete!"
 echo ""
-echo "🛠️  Installed AI tools:"
+echo "🛠️  AI Sandbox built with tools:"
 for tool in "${TOOLS[@]}"; do
   echo "  ai-run $tool (or: $tool)"
 done
+echo ""
+echo "  ai-run (or: ai)  → Interactive shell with all tools"
+echo ""
+echo "📦 Image: ai-sandbox:latest"
 
 if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
   echo ""
@@ -527,6 +534,9 @@ if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
         ;;
       playwright-mcp)
         echo "  @playwright/mcp - Microsoft Playwright MCP server"
+        ;;
+      rtk)
+        echo "  rtk - Token optimizer for AI coding agents (60-90% savings)"
         ;;
     esac
   done

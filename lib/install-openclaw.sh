@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-# OpenClaw installer: Uses official Docker Compose setup
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+# openclaw uses docker-compose and is handled separately - no Dockerfile snippet
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="openclaw"
 
 echo "🔄 Installing $TOOL (OpenClaw - Official Docker Compose)..."

@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# CodeBuddy CLI installer: Tencent's AI assistant
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/codebuddy && \
+    cd /usr/local/lib/codebuddy && \
+    bun init -y && \
+    bun add @tencent-ai/codebuddy-code && \
+    ln -s /usr/local/lib/codebuddy/node_modules/.bin/codebuddy /usr/local/bin/codebuddy
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="codebuddy"
 
 echo "Installing $TOOL (Tencent CodeBuddy CLI)..."

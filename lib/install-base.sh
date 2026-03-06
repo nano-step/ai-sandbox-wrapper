@@ -228,6 +228,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Install bun (used by most AI tool install scripts)
+RUN npm install -g bun
+
 # Install pnpm globally using npm (not bun, for stability)
 RUN npm install -g pnpm
 
@@ -250,6 +253,12 @@ RUN useradd -m -u \${AGENT_UID} -d /home/agent agent && \\
 USER agent
 ENV HOME=/home/agent
 EOF
+
+# GENERATE_ONLY mode: write Dockerfile but don't build
+if [[ "${GENERATE_ONLY:-0}" -eq 1 ]]; then
+  echo "✅ Base Dockerfile generated at dockerfiles/base/Dockerfile"
+  exit 0
+fi
 
 echo "Building base Docker image..."
 HOST_UID=$(id -u)

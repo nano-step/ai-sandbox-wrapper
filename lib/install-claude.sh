@@ -1,7 +1,26 @@
 #!/usr/bin/env bash
 set -e
 
-# Claude Code installer: Anthropic's AI coding agent (Native Binary)
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends tmux && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @kaitranntt/ccs --ignore-scripts && \
+    mkdir -p /home/agent/.ccs && \
+    chown -R agent:agent /home/agent/.ccs && \
+    which ccs && ccs --version
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    mkdir -p /usr/local/share && \
+    mv /home/agent/.local/share/claude /usr/local/share/claude && \
+    ln -sf /usr/local/share/claude/versions/$(ls /usr/local/share/claude/versions | head -1) /usr/local/bin/claude
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="claude"
 
 echo "Installing $TOOL (Anthropic Claude Code - Native Binary)..."

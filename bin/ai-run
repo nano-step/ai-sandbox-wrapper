@@ -4,9 +4,10 @@ set -e
 # Show help if requested
 show_help() {
   cat << 'EOF'
-Usage: ai-run <tool> [options] [-- tool-args...]
+Usage: ai-run [tool] [options] [-- tool-args...]
 
 Run AI tools in a secure Docker sandbox.
+When no tool is specified, opens an interactive shell with all installed tools.
 
 Options:
   -s, --shell              Start interactive shell instead of running tool directly
@@ -15,6 +16,7 @@ Options:
   -p, --password <value>   Set OpenCode server password (for web/serve mode)
       --password-env <VAR> Read OpenCode server password from environment variable
       --allow-unsecured    Allow OpenCode server to run without password (suppresses warning)
+      --git-fetch          Enable git fetch-only mode (blocks push)
   -h, --help               Show this help message
       --help-env           Show environment variables reference
 
@@ -34,11 +36,13 @@ OpenCode Server Authentication (web/serve mode only):
   Precedence: --password > --password-env > OPENCODE_SERVER_PASSWORD env > interactive prompt
 
 Examples:
+  ai-run                                  # Open interactive shell with all tools
   ai-run claude                           # Run Claude in sandbox
   ai-run opencode web -e 4096             # Run OpenCode web with port exposed
   ai-run opencode web -p secret           # Run with password
   ai-run opencode --shell                 # Start shell, run tool manually
   ai-run aider -n mynetwork               # Connect to Docker network
+  ai-run opencode --git-fetch             # Git fetch only (no push)
 
 Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
 EOF
@@ -124,17 +128,33 @@ if [[ "${1:-}" == "--help-env" ]]; then
   show_help_env
 fi
 
-TOOL="$1"
-shift 2>/dev/null || { echo "❌ ERROR: No tool specified. Use 'ai-run --help' for usage."; exit 1; }
+TOOL="${1:-}"
+if [[ -n "$TOOL" && ! "$TOOL" =~ ^- ]]; then
+  shift
+else
+  TOOL=""
+fi
+
+# Handle no tool specified
+if [[ -z "$TOOL" ]]; then
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    echo "❌ ERROR: No tool specified and no TTY available."
+    echo "   Use: ai-run <tool> [args...]"
+    exit 1
+  fi
+  SHELL_MODE=true
+fi
 
 # Parse flags
-SHELL_MODE=false
+# Note: SHELL_MODE may already be true if no tool was specified
+SHELL_MODE="${SHELL_MODE:-false}"
 NETWORK_FLAG=false
 NETWORK_ARG=""
 EXPOSE_ARG=""
 SERVER_PASSWORD=""
 PASSWORD_ENV_VAR=""
 ALLOW_UNSECURED=false
+GIT_FETCH_ONLY_FLAG=false
 TOOL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -175,6 +195,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --allow-unsecured)
       ALLOW_UNSECURED=true
+      shift
+      ;;
+    --git-fetch)
+      GIT_FETCH_ONLY_FLAG=true
       shift
       ;;
     *)
@@ -411,7 +435,7 @@ upgrade_config_to_v2() {
   fi
 
   # Add missing v2 fields while preserving existing networks
-  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}})' \
+  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}}) | .git.fetchOnlyWorkspaces = (.git.fetchOnlyWorkspaces // [])' \
     "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
     && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
   chmod 600 "$AI_SANDBOX_CONFIG"
@@ -426,7 +450,7 @@ init_config() {
 
   if [[ ! -f "$AI_SANDBOX_CONFIG" ]]; then
     # Create new v2 config
-    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
+    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"fetchOnlyWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
     echo "$initial_config" > "$AI_SANDBOX_CONFIG"
     chmod 600 "$AI_SANDBOX_CONFIG"
 
@@ -455,7 +479,7 @@ while IFS= read -r ws; do
 done < <(read_workspaces)
 
 if [[ "$ALLOWED" != "true" ]]; then
-  echo "⚠️  SECURITY WARNING: You are running $TOOL outside a whitelisted workspace."
+  echo "⚠️  SECURITY WARNING: You are running ${TOOL:-shell} outside a whitelisted workspace."
   echo "   Current path: $CURRENT_DIR"
   echo ""
   echo "Allowing this path gives the AI container access to this folder."
@@ -533,17 +557,86 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
 fi
 
 if [[ "$AI_IMAGE_SOURCE" == "registry" ]]; then
-  IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-${TOOL}:latest"
+  IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-sandbox:latest"
 else
-  IMAGE="ai-${TOOL}:latest"
-    fi
+  IMAGE="ai-sandbox:latest"
+fi
 
-# V2 tool-centric paths
-HOME_DIR="$SANDBOX_DIR/tools/$TOOL/home"
+# Tool validation (warn if tool not in config.json)
+if [[ -n "$TOOL" ]]; then
+  if command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    INSTALLED_TOOLS=$(jq -r '.tools.installed // [] | .[]' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    if [[ -n "$INSTALLED_TOOLS" ]] && ! echo "$INSTALLED_TOOLS" | grep -qx "$TOOL"; then
+      echo "⚠️  WARNING: Tool '$TOOL' may not be installed in the sandbox image."
+      echo "   Installed tools: $(echo "$INSTALLED_TOOLS" | tr '\n' ', ' | sed 's/,$//')"
+      echo "   Run setup.sh to add tools."
+      echo ""
+    fi
+  fi
+fi
+
+# Shared home directory for all tools (unified image)
+HOME_DIR="$SANDBOX_DIR/home"
 GIT_SHARED_DIR="$SANDBOX_DIR/shared/git"
+CACHE_DIR="$SANDBOX_DIR/cache"
 
 mkdir -p "$HOME_DIR"
 mkdir -p "$GIT_SHARED_DIR"
+mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/bun" "$CACHE_DIR/pip" "$CACHE_DIR/playwright-browsers"
+
+# ============================================================================
+# MIGRATION V3: Merge per-tool home directories into unified home
+# ============================================================================
+migrate_to_unified_home() {
+  local marker_file="$SANDBOX_DIR/.migrated-unified-home"
+
+  # Skip if already migrated
+  [[ -f "$marker_file" ]] && return 0
+
+  # Check if any per-tool home directories exist
+  local needs_migration=false
+  for tool_home in "$SANDBOX_DIR"/tools/*/home; do
+    if [[ -d "$tool_home" ]]; then
+      needs_migration=true
+      break
+    fi
+  done
+
+  [[ "$needs_migration" == "false" ]] && { touch "$marker_file"; return 0; }
+
+  echo "🔄 Migrating per-tool home directories to unified home..."
+
+  local migrated_count=0
+  for tool_home in "$SANDBOX_DIR"/tools/*/home; do
+    [[ -d "$tool_home" ]] || continue
+    local tool_name
+    tool_name=$(basename "$(dirname "$tool_home")")
+    echo "  🔄 Migrating tools/$tool_name/home/ → home/"
+
+    # Use cp -rn (no-clobber) - works on macOS and Linux
+    # Falls back to rsync if cp -rn fails (some older systems)
+    # KNOWN ISSUE: glob * doesn't match dotfiles (.nano-brain, .config, etc.)
+    # TODO: fix with dotglob or rsync-first approach
+    if cp -rn "$tool_home/"* "$HOME_DIR/" 2>/dev/null; then
+      ((migrated_count++))
+    elif command -v rsync &>/dev/null; then
+      rsync -a --ignore-existing "$tool_home/" "$HOME_DIR/" 2>/dev/null && ((migrated_count++))
+    else
+      echo "  ⚠️  Could not migrate $tool_name (cp -rn and rsync unavailable)"
+    fi
+  done
+
+  # Create marker file
+  date -Iseconds > "$marker_file" 2>/dev/null || date > "$marker_file"
+
+  if [[ $migrated_count -gt 0 ]]; then
+    echo "✅ Migration complete! Merged $migrated_count tool home directories."
+    echo ""
+    echo "ℹ️  Old per-tool home directories preserved. Run 'npx @kokorolx/ai-sandbox-wrapper clean' to remove them."
+  fi
+}
+
+migrate_to_unified_home
 
 # Build volume mounts for all whitelisted workspaces
 VOLUME_MOUNTS=""
@@ -551,13 +644,47 @@ while IFS= read -r ws; do
   VOLUME_MOUNTS="$VOLUME_MOUNTS -v $ws:$ws:delegated"
 done < "$WORKSPACES_FILE"
 
-# Tool-specific config migration and setup
-# All tool configs now live in HOME_DIR (~/.ai-sandbox/home/$TOOL/)
-# which is mounted as /home/agent in the container
+# Config mount registry for all tools
+# Maps tool name to space-separated config paths (relative to $HOME)
+get_tool_configs() {
+  case "$1" in
+    amp)       echo ".config/amp .local/share/amp" ;;
+    opencode)  echo ".config/opencode .local/share/opencode" ;;
+    claude)    echo ".claude .ccs" ;;
+    openclaw)  echo ".openclaw" ;;
+    droid)     echo ".config/droid" ;;
+    qoder)     echo ".config/qoder" ;;
+    auggie)    echo ".config/auggie" ;;
+    codebuddy) echo ".config/codebuddy" ;;
+    jules)     echo ".config/jules" ;;
+    shai)      echo ".config/shai" ;;
+    gemini)    echo ".config/gemini" ;;
+    aider)     echo ".config/aider .aider" ;;
+    kilo)      echo ".config/kilo" ;;
+    codex)     echo ".config/codex" ;;
+    qwen)      echo ".config/qwen" ;;
+  esac
+}
 
-# Tool-specific config persistence
-# Instead of copying (one-way), we now bind-mount host paths directly
-# to ensure changes inside the container persist to the host.
+# All known tools (for fallback)
+ALL_KNOWN_TOOLS="amp opencode claude openclaw droid qoder auggie codebuddy jules shai gemini aider kilo codex qwen"
+
+# Get list of installed tools from config.json, fallback to all known tools
+get_installed_tools() {
+  local installed
+  if command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    installed=$(jq -r '.tools.installed[]? // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  fi
+  if [[ -z "$installed" ]]; then
+    # Fallback: return all known tools in registry
+    echo "$ALL_KNOWN_TOOLS"
+  else
+    echo "$installed"
+  fi
+}
+
+# Tool config persistence via bind mounts
+# Bind-mount host paths directly to ensure changes persist to the host.
 TOOL_CONFIG_MOUNTS=""
 
 mount_tool_config() {
@@ -575,67 +702,45 @@ mount_tool_config() {
   fi
 }
 
-case "$TOOL" in
-  amp)
-    mount_tool_config "$HOME/.config/amp" ".config/amp"
-    mount_tool_config "$HOME/.local/share/amp" ".local/share/amp"
-    ;;
-  opencode)
-    mount_tool_config "$HOME/.config/opencode" ".config/opencode"
-    mount_tool_config "$HOME/.local/share/opencode" ".local/share/opencode"
-    ;;
-  openclaw)
-    mount_tool_config "$HOME/.openclaw" ".openclaw"
-    ;;
-  claude)
-    mount_tool_config "$HOME/.claude" ".claude"
-    mount_tool_config "$HOME/.ccs" ".ccs"
-    ;;
-  droid)
-    mount_tool_config "$HOME/.config/droid" ".config/droid"
-    ;;
-  qoder)
-    mount_tool_config "$HOME/.config/qoder" ".config/qoder"
-    ;;
-  auggie)
-    mount_tool_config "$HOME/.config/auggie" ".config/auggie"
-    ;;
-  codebuddy)
-    mount_tool_config "$HOME/.config/codebuddy" ".config/codebuddy"
-    ;;
-  jules)
-    mount_tool_config "$HOME/.config/jules" ".config/jules"
-    ;;
-  shai)
-    mount_tool_config "$HOME/.config/shai" ".config/shai"
-    ;;
-  gemini)
-    mount_tool_config "$HOME/.config/gemini" ".config/gemini"
-    ;;
-  aider)
-    mount_tool_config "$HOME/.config/aider" ".config/aider"
-    mount_tool_config "$HOME/.aider" ".aider"
-    ;;
-  kilo)
-    mount_tool_config "$HOME/.config/kilo" ".config/kilo"
-    ;;
-  codex)
-    mount_tool_config "$HOME/.config/codex" ".config/codex"
-    ;;
-  qwen)
-    mount_tool_config "$HOME/.config/qwen" ".config/qwen"
-    ;;
-esac
+# Mount configs for all installed tools (unified image)
+for tool in $(get_installed_tools); do
+  for cfg_path in $(get_tool_configs "$tool"); do
+    mount_tool_config "$HOME/$cfg_path" "$cfg_path"
+  done
+done
+
+# Bundle OpenCode default skills (if opencode is installed)
+if get_installed_tools | grep -qw "opencode"; then
+  AIRUN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  BUNDLED_SKILLS_DIR="$AIRUN_DIR/../skills"
+  if [[ -d "$BUNDLED_SKILLS_DIR" ]]; then
+    for skill_dir in "$BUNDLED_SKILLS_DIR"/*/; do
+      [[ ! -d "$skill_dir" ]] && continue
+      skill_name=$(basename "$skill_dir")
+      target_dir="$HOME/.config/opencode/skills/$skill_name"
+      if [[ ! -d "$target_dir" ]]; then
+        mkdir -p "$target_dir"
+        cp -r "$skill_dir"* "$target_dir/" 2>/dev/null || true
+      fi
+    done
+  fi
+fi
 
 # Ensure required directories exist in HOME_DIR
 mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.cache" "$HOME_DIR/.bun"
 
-# Project-level config mount (if exists)
-CONFIG_MOUNT=""
-PROJECT_CONFIG="$CURRENT_DIR/.$TOOL.json"
+SHARED_CACHE_MOUNTS="-v $CACHE_DIR/npm:/home/agent/.npm:delegated"
+SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/bun:/home/agent/.bun/install/cache:delegated"
+SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/pip:/home/agent/.cache/pip:delegated"
+SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/playwright-browsers:/opt/playwright-browsers:delegated"
 
-if [[ -f "$PROJECT_CONFIG" ]]; then
-  CONFIG_MOUNT="-v $PROJECT_CONFIG:$CURRENT_DIR/.$TOOL.json:delegated"
+# Project-level config mount (if exists and tool specified)
+CONFIG_MOUNT=""
+if [[ -n "$TOOL" ]]; then
+  PROJECT_CONFIG="$CURRENT_DIR/.$TOOL.json"
+  if [[ -f "$PROJECT_CONFIG" ]]; then
+    CONFIG_MOUNT="-v $PROJECT_CONFIG:$CURRENT_DIR/.$TOOL.json:delegated"
+  fi
 fi
 
 # ============================================================================
@@ -1051,8 +1156,48 @@ is_git_allowed() {
   return 1
 }
 
+# Check if workspace is in fetch-only mode (config.json)
+is_git_fetch_only() {
+  local ws="$1"
+  if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    local fetch_only=$(jq -r --arg ws "$ws" '.git.fetchOnlyWorkspaces // [] | index($ws) // -1' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    [[ "$fetch_only" -ge 0 ]] && return 0
+  fi
+  return 1
+}
+
+# Apply fetch-only restrictions by adding pushInsteadOf to gitconfig
+apply_git_fetch_only() {
+  local gitconfig_path="$HOME_DIR/.gitconfig"
+  # Ensure .gitconfig exists
+  touch "$gitconfig_path"
+  # Append push-blocking config (redirects all push URLs to non-existent protocol)
+  cat >> "$gitconfig_path" << 'FETCHONLY'
+
+# AI Sandbox: Git fetch-only mode (push disabled)
+[url "no-push://blocked"]
+	pushInsteadOf = git@
+	pushInsteadOf = ssh://
+	pushInsteadOf = https://
+	pushInsteadOf = http://
+FETCHONLY
+  echo "🔒 Git fetch-only mode: push operations are blocked"
+}
+
+GIT_FETCH_ONLY_MODE=false
+
+# Check --git-fetch flag
+if [[ "$GIT_FETCH_ONLY_FLAG" == "true" ]]; then
+  GIT_FETCH_ONLY_MODE=true
+fi
+
+# Check if workspace is in fetch-only list
+if is_git_fetch_only "$CURRENT_DIR"; then
+  GIT_FETCH_ONLY_MODE=true
+fi
+
 # Check if Git access is allowed for this workspace
-if is_git_allowed "$CURRENT_DIR"; then
+if is_git_allowed "$CURRENT_DIR" || is_git_fetch_only "$CURRENT_DIR" || [[ "$GIT_FETCH_ONLY_FLAG" == "true" ]]; then
   # Previously allowed for this workspace
   # Check if saved keys exist for this workspace
   WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
@@ -1094,7 +1239,7 @@ if is_git_allowed "$CURRENT_DIR"; then
       if [ -x "$SETUP_SSH" ]; then
         # Join SAVED_KEYS into a comma-separated string for --keys
         KEYS_ARG=$(IFS=,; echo "${SAVED_KEYS[*]}")
-        output=$("$SETUP_SSH" --keys "$KEYS_ARG" 2>&1)
+        output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
         TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
         if [ -f "$TEMP_CONFIG" ]; then
           cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
@@ -1127,6 +1272,11 @@ if is_git_allowed "$CURRENT_DIR"; then
     # Copy gitconfig to HOME_DIR (can't mount file inside mounted directory)
     cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
   fi
+
+  # Apply fetch-only restrictions if mode is active
+  if [[ "$GIT_FETCH_ONLY_MODE" == "true" ]]; then
+    apply_git_fetch_only
+  fi
 else
   # Ask user if they want Git access for this workspace (only in interactive mode)
   if [[ -t 0 ]] && ([ -d "$HOME/.ssh" ] || [ -f "$HOME/.gitconfig" ]); then
@@ -1139,11 +1289,13 @@ else
     echo "  1) Yes, allow once (this session only)"
     echo "  2) Yes, always allow for this workspace"
     echo "  3) No, keep Git disabled (secure default)"
+    echo "  4) Fetch only - allow once (no push, this session)"
+    echo "  5) Fetch only - always for this workspace (no push)"
     echo ""
-    read -p "Choice [1-3]: " git_choice
+    read -p "Choice [1-5]: " git_choice
 
     case "$git_choice" in
-      1|2)
+      1|2|4|5)
         # Interactive SSH key selection
         echo ""
         echo "🔑 SSH Key Selection"
@@ -1199,7 +1351,7 @@ else
                 # Join SELECTED_SSH_KEYS into a comma-separated string for --keys
                 KEYS_ARG=$(IFS=,; echo "${SELECTED_SSH_KEYS[*]}")
                 # Run it and capture the filtered config path
-                output=$("$SETUP_SSH" --keys "$KEYS_ARG" 2>&1)
+                output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
                 TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
                 if [ -f "$TEMP_CONFIG" ]; then
                   cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
@@ -1235,6 +1387,9 @@ else
               cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
             fi
 
+            if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
+              GIT_FETCH_ONLY_MODE=true
+            fi
             if [ "$git_choice" = "2" ]; then
               # Save workspace and selected keys for future sessions
               echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
@@ -1249,6 +1404,20 @@ else
               mkdir -p "$GIT_SHARED_DIR/keys"
               printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
               echo "✅ Git access enabled and saved for: $CURRENT_DIR"
+            elif [ "$git_choice" = "5" ]; then
+              # Save workspace to fetchOnlyWorkspaces
+              if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+                jq --arg ws "$CURRENT_DIR" '.git.fetchOnlyWorkspaces = ((.git.fetchOnlyWorkspaces // []) + [$ws] | unique)' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                  && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+                chmod 600 "$AI_SANDBOX_CONFIG"
+              fi
+              # Save selected keys (one per line for easier parsing)
+              WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
+              mkdir -p "$GIT_SHARED_DIR/keys"
+              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
+              echo "✅ Git fetch-only access enabled and saved for: $CURRENT_DIR"
+            elif [ "$git_choice" = "4" ]; then
+              echo "✅ Git fetch-only access enabled for this session"
             else
               echo "✅ Git access enabled for this session"
             fi
@@ -1264,6 +1433,11 @@ else
         echo "🔒 Git access disabled (secure mode)"
         ;;
     esac
+
+    # Apply fetch-only restrictions if mode is active
+    if [[ "$GIT_FETCH_ONLY_MODE" == "true" ]]; then
+      apply_git_fetch_only
+    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
   fi
@@ -1346,7 +1520,7 @@ generate_container_name() {
   # Generate random 6-character suffix (hex)
   local random_suffix=$(openssl rand -hex 3)
 
-  echo "${TOOL}-${folder_name}-${random_suffix}"
+  echo "${TOOL:-shell}-${folder_name}-${random_suffix}"
 }
 
 # Container name and TTY allocation
@@ -1929,15 +2103,33 @@ fi
 
 # Prepare command based on mode
 ENTRYPOINT_OVERRIDE=""
-if [[ "$SHELL_MODE" == "true" ]]; then
-  # Shell mode: override entrypoint to bash and show welcome message
+if [[ -n "$TOOL" && "$SHELL_MODE" != "true" ]]; then
+  # Direct tool execution: override entrypoint to the tool
+  ENTRYPOINT_OVERRIDE="--entrypoint $TOOL"
+  DOCKER_COMMAND=("${TOOL_ARGS[@]}")
+elif [[ "$SHELL_MODE" == "true" || -z "$TOOL" ]]; then
+  # Shell mode (explicit --shell or no tool specified)
   ENTRYPOINT_OVERRIDE="--entrypoint bash"
-  DOCKER_COMMAND=(
-    "-c"
-    "echo ''; echo '🚀 AI Tool Container - Interactive Shell'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; echo \"Tool available: ${TOOL}\"; echo 'Run the tool: ${TOOL}'; echo 'Exit container: exit or Ctrl+D'; echo ''; echo \"Additional tools:\"; echo '  - specify (spec-kit): Spec-driven development'; echo '  - uipro (ux-ui-promax): UI/UX design intelligence'; echo '  - openspec: OpenSpec workflow'; echo ''; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; exec bash"
-  )
+  # Build welcome message with installed tools
+  INSTALLED_TOOLS_MSG=""
+  if command -v jq &>/dev/null && [[ -f "$SANDBOX_DIR/config.json" ]]; then
+    INSTALLED_TOOLS_MSG=$(jq -r '.tools.installed // [] | join(", ")' "$SANDBOX_DIR/config.json" 2>/dev/null || echo "")
+  fi
+  if [[ -n "$TOOL" ]]; then
+    # Shell mode with specific tool (ai-run claude --shell)
+    DOCKER_COMMAND=(
+      "-c"
+      "echo ''; echo '🚀 AI Tool Container - Interactive Shell'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; echo \"Tool available: ${TOOL}\"; echo 'Run the tool: ${TOOL}'; echo 'Exit container: exit or Ctrl+D'; echo ''; echo \"Additional tools:\"; echo '  - specify (spec-kit): Spec-driven development'; echo '  - uipro (ux-ui-promax): UI/UX design intelligence'; echo '  - openspec: OpenSpec workflow'; echo ''; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; exec bash"
+    )
+  else
+    # Shell mode without tool (ai-run with no args)
+    DOCKER_COMMAND=(
+      "-c"
+      "echo ''; echo '🚀 AI Sandbox - Interactive Shell'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; echo 'Installed tools: ${INSTALLED_TOOLS_MSG:-unknown}'; echo ''; echo 'Run any tool by name: claude, opencode, gemini, etc.'; echo 'Exit: exit or Ctrl+D'; echo ''; echo 'Enhancement tools: specify, uipro, openspec, rtk'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; exec bash"
+    )
+  fi
 else
-  # Direct mode: use image's default entrypoint with arguments
+  # Fallback: direct mode with image's default entrypoint
   DOCKER_COMMAND=("${TOOL_ARGS[@]}")
 fi
 
@@ -1971,13 +2163,17 @@ fi
 mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
 chmod -R u+w "$HOME_DIR" "$GIT_SHARED_DIR" 2>/dev/null || true
 
-# Selective Cache Isolation (Anonymous Volumes)
-# Use anonymous volumes to "hide" host-poisoned node_modules and caches
-# while keeping configurations and auth data.
-CACHE_MOUNTS=""
-if [[ "$TOOL" == "opencode" ]]; then
-  # Isolate heavy caches and node_modules to prevent Bun/Node conflicts
-  CACHE_MOUNTS="-v /home/agent/.npm -v /home/agent/.cache -v /home/agent/.opencode/node_modules"
+if [[ ! -f "$CACHE_DIR/playwright-browsers/.seeded" ]]; then
+  if docker run --rm "$IMAGE" test -d /opt/playwright-browsers 2>/dev/null; then
+    echo "🔄 Seeding shared Playwright browser cache..."
+    docker run --rm -v "$CACHE_DIR/playwright-browsers":/export "$IMAGE" \
+      cp -a /opt/playwright-browsers/. /export/ 2>/dev/null && \
+      touch "$CACHE_DIR/playwright-browsers/.seeded" && \
+      echo "✅ Playwright browsers cached" || \
+      echo "⚠️  Playwright browser seeding failed (will retry next run)"
+  else
+    touch "$CACHE_DIR/playwright-browsers/.seeded"
+  fi
 fi
 
 # Detect display configuration (clipboard integration)
@@ -2055,12 +2251,12 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $TOOL_CONFIG_MOUNTS \
   $GIT_MOUNTS \
   $NETWORK_OPTIONS \
-  $CACHE_MOUNTS \
   $DISPLAY_FLAGS \
   $HOST_ACCESS_ARGS \
   $PORT_MAPPINGS \
   $OPENCODE_PASSWORD_ENV \
   -v "$HOME_DIR":/home/agent \
+  $SHARED_CACHE_MOUNTS \
   -w "$CURRENT_DIR" \
   --env-file "$ENV_FILE" \
   -e TERM="$TERM" \

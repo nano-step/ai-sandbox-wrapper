@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -e
 
-# SHAI CLI installer: OVHcloud's AI agent
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN curl -fsSL https://raw.githubusercontent.com/ovh/shai/main/install.sh | bash && \
+    mv /home/agent/.local/bin/shai /usr/local/bin/shai
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="shai"
 
 echo "Installing $TOOL (OVHcloud SHAI)..."

@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# Auggie CLI installer: Augment Code's AI assistant
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/auggie && \
+    cd /usr/local/lib/auggie && \
+    bun init -y && \
+    bun add @augmentcode/auggie && \
+    ln -s /usr/local/lib/auggie/node_modules/.bin/auggie /usr/local/bin/auggie
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="auggie"
 
 echo "Installing $TOOL (Augment Auggie CLI)..."

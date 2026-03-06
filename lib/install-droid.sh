@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -e
 
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /home/agent/.factory && \
+    bash -c "curl -fsSL https://app.factory.ai/cli | sh" && \
+    mv /home/agent/.local/bin/droid /usr/local/bin/droid && \
+    chown -R agent:agent /home/agent/.factory
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 echo "Installing droid (Factory CLI)..."
 
 # Create directories

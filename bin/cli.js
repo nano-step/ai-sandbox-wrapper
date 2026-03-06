@@ -23,6 +23,7 @@ Commands:
   setup                 Run interactive setup (configure workspaces, select tools)
   update                Interactive menu to manage config (workspaces, git, networks)
   clean                 Interactive cleanup for caches/configs
+  clean cache [type]    Clear shared package caches (npm, bun, pip, playwright-browsers)
   config show [--json]         Display current global configuration
   config tool <tool> [--show]  Display host paths and config for a specific tool
 
@@ -33,6 +34,8 @@ Commands:
   git status            Show git-enabled workspaces
   git enable <path>     Enable git access for a workspace
   git disable <path>    Disable git access for a workspace
+  git fetch-only <path>  Enable fetch-only git access (no push) for a workspace
+  git full <path>        Enable full git access for a workspace (moves from fetch-only if needed)
 
   network list          List configured networks
   network add <name> [--global|--workspace <path>]  Add a network
@@ -324,9 +327,9 @@ async function runConfigTool(toolName, showContent) {
     process.exit(1);
   }
 
-  const toolHome = path.join(SANDBOX_DIR, 'tools', toolName, 'home');
+  const toolHome = path.join(SANDBOX_DIR, 'home');
   console.log(`\n🔍 Sandbox Configuration for: ${toolName}`);
-  console.log(`Host Home:  ${toolHome}`);
+  console.log(`Sandbox Home: ${toolHome}`);
 
   if (!fs.existsSync(toolHome)) {
     console.log('Status:     ⚠️  Not yet initialized (folder missing on host)');
@@ -462,17 +465,25 @@ function runWorkspaceRemove(inputPath) {
 // GIT COMMANDS
 // ============================================================================
 function runGitStatus() {
-  const config = readConfig();
-  const allowed = config.git?.allowedWorkspaces || [];
+  const config = readConfig()
+  const allowed = config.git?.allowedWorkspaces || []
+  const fetchOnly = config.git?.fetchOnlyWorkspaces || []
 
-  console.log('\n🔐 Git-Enabled Workspaces:\n');
-  if (allowed.length === 0) {
-    console.log('  (no workspaces with git access)');
-    console.log('\n  Enable git: npx @kokorolx/ai-sandbox-wrapper git enable <workspace-path>');
+  console.log('\n🔐 Git-Enabled Workspaces:\n')
+  if (allowed.length === 0 && fetchOnly.length === 0) {
+    console.log('  (no workspaces with git access)')
+    console.log('\n  Enable git: npx @kokorolx/ai-sandbox-wrapper git enable <workspace-path>')
   } else {
-    allowed.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
+    if (allowed.length > 0) {
+      console.log('  Full access:')
+      allowed.forEach((ws, i) => console.log(`    ${i + 1}. ${ws}`))
+    }
+    if (fetchOnly.length > 0) {
+      console.log('  Fetch only (no push):')
+      fetchOnly.forEach((ws, i) => console.log(`    ${i + 1}. ${ws}`))
+    }
   }
-  console.log('');
+  console.log('')
 }
 
 function runGitEnable(inputPath) {
@@ -539,6 +550,66 @@ function runGitDisable(inputPath) {
   }
 
   console.log(`✅ Disabled git access for: ${expandedPath}`);
+}
+
+function runGitFetchOnly(inputPath) {
+  if (!inputPath) {
+    console.error('❌ Please provide a workspace path')
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git fetch-only <path>')
+    process.exit(1)
+  }
+
+  const expandedPath = expandHome(inputPath)
+  const config = readConfig()
+
+  if (!config.git) config.git = { allowedWorkspaces: [], fetchOnlyWorkspaces: [], keySelections: {} }
+  if (!config.git.fetchOnlyWorkspaces) config.git.fetchOnlyWorkspaces = []
+
+  // Remove from full access if present
+  if (config.git.allowedWorkspaces) {
+    const fullIdx = config.git.allowedWorkspaces.indexOf(expandedPath)
+    if (fullIdx !== -1) config.git.allowedWorkspaces.splice(fullIdx, 1)
+  }
+
+  if (config.git.fetchOnlyWorkspaces.includes(expandedPath)) {
+    console.log(`ℹ️  Git fetch-only already enabled for: ${expandedPath}`)
+    return
+  }
+
+  config.git.fetchOnlyWorkspaces.push(expandedPath)
+  writeConfig(config)
+
+  console.log(`✅ Enabled git fetch-only for: ${expandedPath}`)
+}
+
+function runGitFull(inputPath) {
+  if (!inputPath) {
+    console.error('❌ Please provide a workspace path')
+    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git full <path>')
+    process.exit(1)
+  }
+
+  const expandedPath = expandHome(inputPath)
+  const config = readConfig()
+
+  if (!config.git) config.git = { allowedWorkspaces: [], fetchOnlyWorkspaces: [], keySelections: {} }
+  if (!config.git.allowedWorkspaces) config.git.allowedWorkspaces = []
+
+  // Remove from fetch-only if present
+  if (config.git.fetchOnlyWorkspaces) {
+    const foIdx = config.git.fetchOnlyWorkspaces.indexOf(expandedPath)
+    if (foIdx !== -1) config.git.fetchOnlyWorkspaces.splice(foIdx, 1)
+  }
+
+  if (config.git.allowedWorkspaces.includes(expandedPath)) {
+    console.log(`ℹ️  Git full access already enabled for: ${expandedPath}`)
+    return
+  }
+
+  config.git.allowedWorkspaces.push(expandedPath)
+  writeConfig(config)
+
+  console.log(`✅ Enabled git full access for: ${expandedPath}`)
 }
 
 // ============================================================================
@@ -1189,6 +1260,45 @@ async function manageNetworksMenu(rl) {
   }
 }
 
+// ============================================================================
+// CLEAN CACHE COMMAND (non-interactive)
+// ============================================================================
+const CACHE_TYPES = ['npm', 'bun', 'pip', 'playwright-browsers']
+
+function runCleanCache(cacheType) {
+  const cacheDir = path.join(SANDBOX_DIR, 'cache')
+
+  if (cacheType && !CACHE_TYPES.includes(cacheType)) {
+    console.error(`❌ Unknown cache type: ${cacheType}`)
+    console.error(`Valid types: ${CACHE_TYPES.join(', ')}`)
+    process.exit(1)
+  }
+
+  const targets = cacheType ? [cacheType] : CACHE_TYPES
+
+  let totalFreed = 0
+  for (const t of targets) {
+    const targetPath = path.join(cacheDir, t)
+    if (!pathExists(targetPath)) {
+      console.log(`  ⏭  ${t}/ (not found)`)
+      continue
+    }
+    const size = getPathSize(targetPath)
+    const sizeNum = typeof size === 'number' ? size : 0
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true })
+      fs.mkdirSync(targetPath, { recursive: true })
+      totalFreed += sizeNum
+      console.log(`  ✓ ${t}/ cleared (${formatBytes(sizeNum)})`)
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err)
+      console.error(`  ❌ ${t}/: ${msg}`)
+    }
+  }
+
+  console.log(`\n🧹 Freed ${formatBytes(totalFreed)}`)
+}
+
 // Parse subcommand and options
 const subCommand = positionalArgs[1];
 const subArg = positionalArgs[2];
@@ -1216,11 +1326,15 @@ switch (command) {
     });
     break;
   case 'clean':
-    runClean().catch((err) => {
-      const message = err && err.message ? err.message : String(err);
-      console.error('❌ Cleanup failed:', message);
-      process.exit(1);
-    });
+    if (subCommand === 'cache') {
+      runCleanCache(subArg)
+    } else {
+      runClean().catch((err) => {
+        const message = err && err.message ? err.message : String(err)
+        console.error('❌ Cleanup failed:', message)
+        process.exit(1)
+      })
+    }
     break;
   case 'config':
     if (subCommand === 'show') {
@@ -1259,11 +1373,17 @@ switch (command) {
         runGitEnable(subArg);
         break;
       case 'disable':
-        runGitDisable(subArg);
-        break;
+        runGitDisable(subArg)
+        break
+      case 'fetch-only':
+        runGitFetchOnly(subArg)
+        break
+      case 'full':
+        runGitFull(subArg)
+        break
       default:
-        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git <status|enable|disable> [path]');
-        process.exit(1);
+        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git <status|enable|disable|fetch-only|full> [path]')
+        process.exit(1)
     }
     break;
   case 'network':
