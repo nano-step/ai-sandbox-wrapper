@@ -9,9 +9,9 @@ RUN npm install -g @kaitranntt/ccs --ignore-scripts && \
     mkdir -p /home/agent/.ccs && \
     chown -R agent:agent /home/agent/.ccs && \
     which ccs && ccs --version
-RUN curl -fsSL https://claude.ai/install.sh | bash && \
+RUN export HOME=/root && curl -fsSL https://claude.ai/install.sh | bash && \
     mkdir -p /usr/local/share && \
-    mv /home/agent/.local/share/claude /usr/local/share/claude && \
+    mv /root/.local/share/claude /usr/local/share/claude && \
     ln -sf /usr/local/share/claude/versions/$(ls /usr/local/share/claude/versions | head -1) /usr/local/bin/claude
 USER agent
 SNIPPET
@@ -46,9 +46,9 @@ RUN npm install -g @kaitranntt/ccs --ignore-scripts && \
     which ccs && ccs --version
 
 # Install Claude Code using official native installer
-RUN curl -fsSL https://claude.ai/install.sh | bash && \
+RUN export HOME=/root && curl -fsSL https://claude.ai/install.sh | bash && \
     mkdir -p /usr/local/share && \
-    mv /home/agent/.local/share/claude /usr/local/share/claude && \
+    mv /root/.local/share/claude /usr/local/share/claude && \
     ln -sf /usr/local/share/claude/versions/$(ls /usr/local/share/claude/versions | head -1) /usr/local/bin/claude
 
 USER agent

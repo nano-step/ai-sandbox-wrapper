@@ -734,6 +734,19 @@ SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/bun:/home/agent/.bun/ins
 SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/pip:/home/agent/.cache/pip:delegated"
 SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/playwright-browsers:/opt/playwright-browsers:delegated"
 
+# Shared skills mount (from host, read-only)
+HOST_SKILLS_DIR="$HOME/.config/agents/skills"
+if [[ -d "$HOST_SKILLS_DIR" ]]; then
+  SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/agents/skills:ro"
+  SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/opencode/skills:ro"
+fi
+
+# Nano-brain mount (from host, read-write)
+if [[ -d "$HOME/.nano-brain" ]]; then
+  SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOME/.nano-brain:/home/agent/.nano-brain:delegated"
+fi
+
+
 # Project-level config mount (if exists and tool specified)
 CONFIG_MOUNT=""
 if [[ -n "$TOOL" ]]; then
@@ -1948,7 +1961,7 @@ configure_opencode_mcp() {
             fi
             ;;
           playwright)
-            if add_mcp_config "playwright" '["npx", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]'; then
+            if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
               echo "  ✓ Configured Playwright MCP"
               configured_any=true
             fi
@@ -1985,7 +1998,7 @@ configure_opencode_mcp() {
               fi
               ;;
             playwright)
-              if add_mcp_config "playwright" '["npx", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]'; then
+              if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
                 echo "    ✓ Configured"
                 configured_any=true
               fi
