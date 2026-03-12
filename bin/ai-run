@@ -17,6 +17,8 @@ Options:
       --password-env <VAR> Read OpenCode server password from environment variable
       --allow-unsecured    Allow OpenCode server to run without password (suppresses warning)
       --git-fetch          Enable git fetch-only mode (blocks push)
+      --no-nano-brain-auto-repair
+                            Disable nano-brain preflight/auto-repair logic
   -h, --help               Show this help message
       --help-env           Show environment variables reference
 
@@ -64,6 +66,10 @@ Runtime Environment Variables (inline with ai-run):
 
   AI_RUN_PLATFORM=linux/amd64 Force specific platform (useful for cross-arch)
                               Example: AI_RUN_PLATFORM=linux/amd64 ai-run opencode
+
+  AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1
+                              Disable nano-brain preflight and automatic repair behavior
+                              Example: AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
 
   PORT_BIND=all               Bind exposed ports to all interfaces (0.0.0.0) instead of localhost
                               ⚠️  Security risk - use only when needed
@@ -155,7 +161,12 @@ SERVER_PASSWORD=""
 PASSWORD_ENV_VAR=""
 ALLOW_UNSECURED=false
 GIT_FETCH_ONLY_FLAG=false
+NANO_BRAIN_AUTO_REPAIR=true
 TOOL_ARGS=()
+
+if [[ "${AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR:-}" == "1" ]]; then
+  NANO_BRAIN_AUTO_REPAIR=false
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -199,6 +210,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --git-fetch)
       GIT_FETCH_ONLY_FLAG=true
+      shift
+      ;;
+    --no-nano-brain-auto-repair)
+      NANO_BRAIN_AUTO_REPAIR=false
       shift
       ;;
     *)
@@ -521,7 +536,7 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
 
   # 2. Check if valid directory
   if [[ -d "$SCREENSHOT_DIR" ]]; then
-    
+
     # 3. Check if ALREADY whitelisted (exact match or parent)
     IS_WHITELISTED=false
     while IFS= read -r ws; do
@@ -544,7 +559,7 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
       echo ""
       # Use /dev/tty to ensure we read from user even if stdin is redirected
       read -p "Whitelist screenshots folder? [y/N]: " CONFIRM_SS < /dev/tty
-      
+
       if [[ "$CONFIRM_SS" =~ ^[Yy]$ ]]; then
         add_workspace "$SCREENSHOT_DIR"
         echo "✅ Added to whitelist."
@@ -741,9 +756,11 @@ if [[ -d "$HOST_SKILLS_DIR" ]]; then
   SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/opencode/skills:ro"
 fi
 
-# Nano-brain mount (from host, read-write)
+# Nano-brain mount disabled to prevent SQLite conflicts between host and container
+# All tools should use the MCP interface to interact with nano-brain on the host
 if [[ -d "$HOME/.nano-brain" ]]; then
-  SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOME/.nano-brain:/home/agent/.nano-brain:delegated"
+  echo "ℹ️  Skipping .nano-brain mount to prevent SQLite database corruption"
+  echo "   Use MCP interface for nano-brain access instead of direct CLI"
 fi
 
 
@@ -1172,27 +1189,27 @@ get_ssh_agent_socket() {
 # Mount SSH agent socket + known_hosts/config (no private keys)
 setup_ssh_agent_forwarding() {
   local agent_sock="$1"
-  
+
   # Mount the agent socket
   GIT_MOUNTS="$GIT_MOUNTS -v $agent_sock:/ssh-agent"
   SSH_AGENT_ENV="-e SSH_AUTH_SOCK=/ssh-agent"
-  
+
   # Still need known_hosts and config for host verification
   mkdir -p "$GIT_CACHE_DIR/ssh"
-  
+
   if [ -f "$HOME/.ssh/known_hosts" ]; then
     cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
     chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
   fi
-  
+
   if [ -f "$HOME/.ssh/config" ]; then
     cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
     chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
   fi
-  
+
   chmod 700 "$GIT_CACHE_DIR/ssh"
   GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
-  
+
   echo "🔒 SSH agent forwarding active (keys never enter container)"
 }
 
@@ -1275,7 +1292,7 @@ if is_git_allowed "$CURRENT_DIR" || is_git_fetch_only "$CURRENT_DIR" || [[ "$GIT
       echo "📋 Syncing Git credentials..."
       echo "⚠️  SSH agent not detected. Falling back to key file mounting."
       echo "   For better security, start ssh-agent: eval \"\$(ssh-agent -s)\" && ssh-add"
-      
+
       if [ -d "$GIT_CACHE_DIR/ssh" ]; then
         chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
         rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
@@ -1374,16 +1391,16 @@ else
           echo "🔒 SSH Agent Forwarding"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           setup_ssh_agent_forwarding "$AGENT_SOCK"
-          
+
           # Copy gitconfig
           if [ -f "$HOME/.gitconfig" ]; then
             cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
           fi
-          
+
           if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
             GIT_FETCH_ONLY_MODE=true
           fi
-          
+
           # Save workspace preference (same logic as before)
           if [ "$git_choice" = "2" ]; then
             echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
@@ -1714,7 +1731,7 @@ resolve_opencode_password() {
     echo "  3) No password (⚠️  unsecured - localhost only)"
     echo ""
     read -p "Choice [1-3]: " password_choice
-    
+
     case "$password_choice" in
       1)
         local generated_password=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
@@ -1783,11 +1800,11 @@ is_mcp_installed() {
 is_mcp_configured() {
   local mcp_name="$1"
   local config_file="$HOME/.config/opencode/opencode.json"
-  
+
   if [[ ! -f "$config_file" ]]; then
     return 1
   fi
-  
+
   if has_jq; then
     jq -e --arg name "$mcp_name" '.mcp[$name] // empty' "$config_file" &>/dev/null
   else
@@ -1801,7 +1818,7 @@ add_mcp_config() {
   local mcp_command="$2"
   local force="${3:-false}"
   local config_file="$HOME/.config/opencode/opencode.json"
-  
+
   # Check if already configured and warn user
   if [[ "$force" != "true" ]] && is_mcp_configured "$mcp_name"; then
     echo ""
@@ -1814,9 +1831,9 @@ add_mcp_config() {
       return 1
     fi
   fi
-  
+
   mkdir -p "$(dirname "$config_file")"
-  
+
   if [[ ! -f "$config_file" ]]; then
     # Create new config with MCP
     echo "{\"mcp\": {\"$mcp_name\": {\"type\": \"local\", \"command\": $mcp_command}}}" > "$config_file"
@@ -1849,47 +1866,47 @@ configure_opencode_mcp() {
   # Only run for opencode tool in interactive mode
   [[ "$TOOL" != "opencode" ]] && return 0
   [[ ! -t 0 ]] && return 0
-  
+
   local config_file="$HOME/.config/opencode/opencode.json"
-  
+
   # Generate workspace hash for skip tracking
   WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-  
+
   # Check if already skipped for this workspace
   if is_mcp_skipped; then
     return 0
   fi
-  
+
   # Detect installed MCP tools (from config.json, set during setup.sh)
   local chrome_installed=false
   local playwright_installed=false
   local chrome_configured=false
   local playwright_configured=false
-  
+
   if is_mcp_installed "chrome-devtools"; then
     chrome_installed=true
     is_mcp_configured "chrome-devtools" && chrome_configured=true
   fi
-  
+
   if is_mcp_installed "playwright"; then
     playwright_installed=true
     is_mcp_configured "playwright" && playwright_configured=true
   fi
-  
+
   # If no MCP tools installed in image, return
   if [[ "$chrome_installed" == "false" && "$playwright_installed" == "false" ]]; then
     return 0
   fi
-  
+
   # If all installed tools are already configured, return silently
   local all_configured=true
   [[ "$chrome_installed" == "true" && "$chrome_configured" == "false" ]] && all_configured=false
   [[ "$playwright_installed" == "true" && "$playwright_configured" == "false" ]] && all_configured=false
-  
+
   if [[ "$all_configured" == "true" ]]; then
     return 0
   fi
-  
+
   # Build lists of configured and unconfigured tools
   local unconfigured=()
   local configured=()
@@ -1897,12 +1914,12 @@ configure_opencode_mcp() {
   [[ "$chrome_installed" == "true" && "$chrome_configured" == "true" ]] && configured+=("chrome-devtools")
   [[ "$playwright_installed" == "true" && "$playwright_configured" == "false" ]] && unconfigured+=("playwright")
   [[ "$playwright_installed" == "true" && "$playwright_configured" == "true" ]] && configured+=("playwright")
-  
+
   # Show prompt
   echo ""
   echo "🔌 MCP Tools Detected"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  
+
   # Show already configured tools
   if [[ ${#configured[@]} -gt 0 ]]; then
     echo "Already configured:"
@@ -1918,7 +1935,7 @@ configure_opencode_mcp() {
     done
     echo ""
   fi
-  
+
   # Show unconfigured tools
   if [[ ${#unconfigured[@]} -gt 0 ]]; then
     echo "Not yet configured:"
@@ -1934,7 +1951,7 @@ configure_opencode_mcp() {
     done
     echo ""
   fi
-  
+
   echo "Configure MCP tools in OpenCode?"
   echo "  1) Yes, configure all detected tools"
   echo "  2) Yes, let me choose which ones"
@@ -1942,16 +1959,16 @@ configure_opencode_mcp() {
   echo "  4) No, don't ask again for this workspace"
   echo ""
   read -p "Choice [1-4]: " mcp_choice
-  
+
   local configured_any=false
-  
+
   case "$mcp_choice" in
     1)
       # Configure all (both unconfigured and offer to reconfigure configured ones)
       local all_tools=()
       [[ "$chrome_installed" == "true" ]] && all_tools+=("chrome-devtools")
       [[ "$playwright_installed" == "true" ]] && all_tools+=("playwright")
-      
+
       for tool in "${all_tools[@]}"; do
         case "$tool" in
           chrome-devtools)
@@ -1974,7 +1991,7 @@ configure_opencode_mcp() {
       local all_tools=()
       [[ "$chrome_installed" == "true" ]] && all_tools+=("chrome-devtools")
       [[ "$playwright_installed" == "true" ]] && all_tools+=("playwright")
-      
+
       for tool in "${all_tools[@]}"; do
         local tool_desc=""
         local status_hint=""
@@ -2017,7 +2034,7 @@ configure_opencode_mcp() {
       echo "ℹ️  Skipped."
       ;;
   esac
-  
+
   # Show config file path for easy editing
   echo ""
   if [[ "$configured_any" == "true" ]]; then
@@ -2083,7 +2100,7 @@ check_port_in_use() {
   else
     return 2
   fi
-  
+
   docker ps --format "{{.Ports}}" 2>/dev/null | grep -q ":$port->" && return 0
   return 1
 }
@@ -2137,10 +2154,10 @@ if detect_opencode_web; then
   if [[ -z "$WEB_PORT" ]]; then
     WEB_PORT=4096
   fi
-  
+
   add_port_to_list "$WEB_PORT" "auto-detected"
   echo "🌐 Detected web command. Auto-exposing port $WEB_PORT."
-  
+
   if ! has_hostname_arg; then
     TOOL_ARGS+=("--hostname" "0.0.0.0")
   fi
@@ -2195,7 +2212,7 @@ if [[ -n "$EXPOSE_PORTS_LIST" ]]; then
   done
 
   echo "🔌 Port mappings: $EXPOSE_PORTS_LIST"
-  
+
   if [[ "$WEB_DETECTED" == "true" ]]; then
     echo "🌐 Web UI available at http://localhost:$WEB_PORT"
   fi
@@ -2214,6 +2231,60 @@ if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
   echo "🔧 Debug: WEB_DETECTED='$WEB_DETECTED'"
   echo "🔧 Debug: EXPOSE_PORTS_LIST='$EXPOSE_PORTS_LIST'"
 fi
+
+is_nano_brain_command() {
+  if [[ "$TOOL" == "nano-brain" ]]; then
+    return 0
+  fi
+
+  if [[ "$TOOL" == "npx" ]]; then
+    for arg in "${TOOL_ARGS[@]}"; do
+      if [[ "$arg" == "nano-brain" ]]; then
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+NANO_BRAIN_AUTOREPAIR_SCRIPT='
+set -e
+ORIG_CMD=("$@")
+REPAIR_PATTERN="(tree-sitter|native binding|Cannot find module.*tree-sitter|compiled against a different Node.js version|Exec format error|invalid ELF header|Native bindings not available)"
+
+echo "🔎 nano-brain preflight: checking runtime cache paths..."
+mkdir -p /home/agent/.npm /home/agent/.cache/node-gyp 2>/dev/null || true
+
+run_with_capture() {
+  local err_file
+  err_file=$(mktemp)
+
+  set +e
+  "${ORIG_CMD[@]}" 2> >(tee "$err_file" >&2)
+  local exit_code=$?
+  set -e
+
+  if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
+    echo "⚠️  Detected nano-brain native module issue."
+    echo "🔧 Running automatic repair (clearing npx/node-gyp caches)..."
+    rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
+    npm cache clean --force >/dev/null 2>&1 || true
+    echo "🔁 Retrying nano-brain command once..."
+    set +e
+    "${ORIG_CMD[@]}"
+    local retry_code=$?
+    set -e
+    rm -f "$err_file"
+    return $retry_code
+  fi
+
+  rm -f "$err_file"
+  return $exit_code
+}
+
+run_with_capture
+'
 
 # Prepare command based on mode
 ENTRYPOINT_OVERRIDE=""
@@ -2245,6 +2316,16 @@ elif [[ "$SHELL_MODE" == "true" || -z "$TOOL" ]]; then
 else
   # Fallback: direct mode with image's default entrypoint
   DOCKER_COMMAND=("${TOOL_ARGS[@]}")
+fi
+
+# Nano-brain targeted preflight + auto-repair wrapper
+if [[ "$SHELL_MODE" != "true" ]] && is_nano_brain_command; then
+  if [[ "$NANO_BRAIN_AUTO_REPAIR" == "true" ]]; then
+    ENTRYPOINT_OVERRIDE="--entrypoint bash"
+    DOCKER_COMMAND=("-lc" "$NANO_BRAIN_AUTOREPAIR_SCRIPT" "nano-brain-wrapper" "$TOOL" "${TOOL_ARGS[@]}")
+  else
+    echo "ℹ️  nano-brain auto-repair disabled"
+  fi
 fi
 
 # Detect platform architecture (avoid slow emulation)
@@ -2298,20 +2379,20 @@ DISPLAY_FLAGS=$(detect_display_config)
 # ============================================================================
 if [[ "$TOOL" == "openclaw" ]]; then
   OPENCLAW_REPO_DIR="$HOME/.ai-sandbox/tools/openclaw/repo"
-  
+
   if [[ ! -d "$OPENCLAW_REPO_DIR" ]]; then
     echo "❌ ERROR: OpenClaw repository not found at $OPENCLAW_REPO_DIR"
     echo "   Run: npx @kokorolx/ai-sandbox-wrapper setup"
     exit 1
   fi
-  
+
   cd "$OPENCLAW_REPO_DIR"
-  
+
   OPENCLAW_COMPOSE_FILE="$OPENCLAW_REPO_DIR/docker-compose.yml"
   OPENCLAW_OVERRIDE_FILE="$OPENCLAW_REPO_DIR/docker-compose.override.yml"
-  
+
   echo "🔄 Generating OpenClaw docker-compose override..."
-  
+
   cat > "$OPENCLAW_OVERRIDE_FILE" <<EOF
 services:
   openclaw-gateway:
@@ -2321,18 +2402,18 @@ services:
     volumes:
       - $HOME/.openclaw:/home/node/.openclaw
 EOF
-  
+
   for workspace in "${WORKSPACES[@]}"; do
     echo "      - $workspace:$workspace" >> "$OPENCLAW_OVERRIDE_FILE"
   done
-  
+
   cat >> "$OPENCLAW_OVERRIDE_FILE" <<EOF
     ports:
       - "18789:18789"
       - "18790:18790"
     working_dir: $CURRENT_DIR
 EOF
-  
+
   if [[ -n "$NETWORK_OPTIONS" ]]; then
     echo "    networks:" >> "$OPENCLAW_OVERRIDE_FILE"
     for net in ${DOCKER_NETWORKS//,/ }; do
@@ -2345,12 +2426,12 @@ EOF
       echo "    external: true" >> "$OPENCLAW_OVERRIDE_FILE"
     done
   fi
-  
+
   echo "🚀 Starting OpenClaw with docker-compose..."
   echo "🌐 Gateway: http://localhost:18789"
   echo "🌐 Bridge: http://localhost:18790"
   echo ""
-  
+
   exec docker compose -f "$OPENCLAW_COMPOSE_FILE" -f "$OPENCLAW_OVERRIDE_FILE" \
     --env-file "$ENV_FILE" \
     up --remove-orphans

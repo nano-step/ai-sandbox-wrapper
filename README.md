@@ -192,6 +192,21 @@ npx @kokorolx/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
 npx @kokorolx/ai-sandbox-wrapper git full ~/projects/myrepo
 ```
 
+### Nano-brain Auto-Repair
+
+When running nano-brain inside the sandbox, `ai-run` now performs a targeted preflight and automatic retry for common native-module failures (for example tree-sitter binding issues).
+
+```bash
+# Auto-repair enabled by default
+ai-run npx nano-brain status
+
+# Disable per-command
+ai-run npx nano-brain status --no-nano-brain-auto-repair
+
+# Disable via environment variable
+AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
+```
+
 ### Clipboard
 
 Clipboard access in containers requires a terminal that supports **OSC52** protocol.
@@ -320,6 +335,10 @@ opencode -n mynetwork         # Join Docker network
 # Git fetch-only
 opencode --git-fetch            # Fetch only (no push)
 
+# Nano-brain
+ai-run npx nano-brain status                      # With auto-repair
+AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
+
 # Management
 npx @kokorolx/ai-sandbox-wrapper workspace list
 npx @kokorolx/ai-sandbox-wrapper clean
@@ -336,6 +355,7 @@ npx @kokorolx/ai-sandbox-wrapper clean
 | Port already in use | Stop the process or use different port |
 | Docker not found | Install and start Docker Desktop |
 | Clipboard not working | Use OSC52-compatible terminal. See [CLIPBOARD_SUPPORT.md](CLIPBOARD_SUPPORT.md) |
+| nano-brain native binding/tree-sitter error | Re-run with auto-repair (default) or manually clear npx cache; disable with `--no-nano-brain-auto-repair` if needed |
 
 ---
 
