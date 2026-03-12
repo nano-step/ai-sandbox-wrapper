@@ -701,6 +701,7 @@ get_installed_tools() {
 # Tool config persistence via bind mounts
 # Bind-mount host paths directly to ensure changes persist to the host.
 TOOL_CONFIG_MOUNTS=""
+RG_COMPAT_MOUNT=""
 
 mount_tool_config() {
   local host_path="$1"
@@ -723,6 +724,32 @@ for tool in $(get_installed_tools); do
     mount_tool_config "$HOME/$cfg_path" "$cfg_path"
   done
 done
+
+setup_opencode_rg_compat() {
+  [[ "$TOOL" != "opencode" ]] && return 0
+
+  local bundled_rg="$HOME/.local/share/opencode/bin/rg"
+  local rg_shim_path="$SANDBOX_DIR/shared/rg-linux-shim"
+
+  [[ -f "$bundled_rg" ]] || return 0
+  command -v file &>/dev/null || return 0
+
+  local rg_file_info
+  rg_file_info=$(file -b "$bundled_rg" 2>/dev/null || true)
+
+  if echo "$rg_file_info" | grep -qi "Mach-O"; then
+    mkdir -p "$(dirname "$rg_shim_path")"
+    cat > "$rg_shim_path" << 'EOF'
+#!/usr/bin/env bash
+exec /usr/bin/rg "$@"
+EOF
+    chmod +x "$rg_shim_path"
+    RG_COMPAT_MOUNT="-v $rg_shim_path:/home/agent/.local/share/opencode/bin/rg:ro"
+    echo "⚠️  Detected incompatible OpenCode bundled rg (Mach-O). Using /usr/bin/rg in container."
+  fi
+}
+
+setup_opencode_rg_compat
 
 # Bundle OpenCode default skills (if opencode is installed)
 if get_installed_tools | grep -qw "opencode"; then
@@ -2230,6 +2257,7 @@ if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
   echo "🔧 Debug: PORT_MAPPINGS='$PORT_MAPPINGS'"
   echo "🔧 Debug: WEB_DETECTED='$WEB_DETECTED'"
   echo "🔧 Debug: EXPOSE_PORTS_LIST='$EXPOSE_PORTS_LIST'"
+  echo "🔧 Debug: RG_COMPAT_MOUNT='$RG_COMPAT_MOUNT'"
 fi
 
 is_nano_brain_command() {
@@ -2261,11 +2289,12 @@ run_with_capture() {
   err_file=$(mktemp)
 
   set +e
-  "${ORIG_CMD[@]}" 2> >(tee "$err_file" >&2)
+  "${ORIG_CMD[@]}" 2>"$err_file"
   local exit_code=$?
   set -e
 
   if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
+    cat "$err_file" >&2
     echo "⚠️  Detected nano-brain native module issue."
     echo "🔧 Running automatic repair (clearing npx/node-gyp caches)..."
     rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
@@ -2279,12 +2308,79 @@ run_with_capture() {
     return $retry_code
   fi
 
+  if [[ $exit_code -eq 0 ]] && grep -Eqi "(\\[treesitter\\] Native bindings not available|symbol graph disabled|tree-sitter-typescript\\.node|No such file or directory)" "$err_file"; then
+    if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
+      echo "ℹ️  nano-brain: non-fatal tree-sitter warning captured." >&2
+      cat "$err_file" >&2
+    else
+      grep -Eiv "(\\[treesitter\\] Native bindings not available|symbol graph disabled|tree-sitter-typescript\\.node|No such file or directory)" "$err_file" >&2 || true
+    fi
+    rm -f "$err_file"
+    return 0
+  fi
+
+  cat "$err_file" >&2
   rm -f "$err_file"
   return $exit_code
 }
 
 run_with_capture
 '
+
+NANO_BRAIN_SHELL_HOOK=$(cat <<'EOF'
+nano_brain_shell_wrapper() {
+  local ORIG_CMD=("$@")
+  local REPAIR_PATTERN="(tree-sitter|native binding|Cannot find module.*tree-sitter|compiled against a different Node.js version|Exec format error|invalid ELF header|Native bindings not available)"
+  local WARN_PATTERN="(\\[treesitter\\] Native bindings not available|symbol graph disabled|tree-sitter-typescript\\.node|No such file or directory)"
+
+  local err_file
+  err_file=$(mktemp)
+
+  set +e
+  "${ORIG_CMD[@]}" 2>"$err_file"
+  local exit_code=$?
+  set -e
+
+  if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
+    cat "$err_file" >&2
+    echo "⚠️  Detected nano-brain native module issue."
+    echo "🔧 Running automatic repair (clearing npx/node-gyp caches)..."
+    rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
+    npm cache clean --force >/dev/null 2>&1 || true
+    echo "🔁 Retrying nano-brain command once..."
+    "${ORIG_CMD[@]}"
+    local retry_code=$?
+    rm -f "$err_file"
+    return $retry_code
+  fi
+
+  if [[ $exit_code -eq 0 ]] && grep -Eqi "$WARN_PATTERN" "$err_file"; then
+    if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
+      echo "ℹ️  nano-brain: non-fatal tree-sitter warning captured." >&2
+      cat "$err_file" >&2
+    else
+      grep -Eiv "$WARN_PATTERN" "$err_file" >&2 || true
+    fi
+    rm -f "$err_file"
+    return 0
+  fi
+
+  cat "$err_file" >&2
+  rm -f "$err_file"
+  return $exit_code
+}
+
+npx() {
+  if [[ "${1:-}" == "nano-brain" ]]; then
+    nano_brain_shell_wrapper command npx "$@"
+    return $?
+  fi
+  command npx "$@"
+}
+
+export -f nano_brain_shell_wrapper npx
+EOF
+)
 
 # Prepare command based on mode
 ENTRYPOINT_OVERRIDE=""
@@ -2319,6 +2415,10 @@ else
 fi
 
 # Nano-brain targeted preflight + auto-repair wrapper
+if [[ "$SHELL_MODE" == "true" ]] && [[ "$NANO_BRAIN_AUTO_REPAIR" == "true" ]] && [[ "${DOCKER_COMMAND[0]:-}" == "-c" ]]; then
+  DOCKER_COMMAND[1]="$NANO_BRAIN_SHELL_HOOK ${DOCKER_COMMAND[1]}"
+fi
+
 if [[ "$SHELL_MODE" != "true" ]] && is_nano_brain_command; then
   if [[ "$NANO_BRAIN_AUTO_REPAIR" == "true" ]]; then
     ENTRYPOINT_OVERRIDE="--entrypoint bash"
@@ -2444,6 +2544,7 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $VOLUME_MOUNTS \
   $CONFIG_MOUNT \
   $TOOL_CONFIG_MOUNTS \
+  $RG_COMPAT_MOUNT \
   $GIT_MOUNTS \
   $SSH_AGENT_ENV \
   $NETWORK_OPTIONS \
