@@ -783,11 +783,12 @@ if [[ -d "$HOST_SKILLS_DIR" ]]; then
   SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/opencode/skills:ro"
 fi
 
-# Nano-brain mount disabled to prevent SQLite conflicts between host and container
-# All tools should use the MCP interface to interact with nano-brain on the host
+# Nano-brain read-only mount
+# Exposes logs/index/sqlite files to container while preventing writes
+NANO_BRAIN_MOUNT=""
 if [[ -d "$HOME/.nano-brain" ]]; then
-  echo "ℹ️  Skipping .nano-brain mount to prevent SQLite database corruption"
-  echo "   Use MCP interface for nano-brain access instead of direct CLI"
+  NANO_BRAIN_MOUNT="-v $HOME/.nano-brain:/home/agent/.nano-brain:ro"
+  echo "ℹ️  Mounted .nano-brain as read-only at /home/agent/.nano-brain"
 fi
 
 
@@ -2554,6 +2555,7 @@ docker run $CONTAINER_NAME --rm $TTY_FLAGS \
   $OPENCODE_PASSWORD_ENV \
   -v "$HOME_DIR":/home/agent \
   $SHARED_CACHE_MOUNTS \
+  $NANO_BRAIN_MOUNT \
   -w "$CURRENT_DIR" \
   --env-file "$ENV_FILE" \
   -e TERM="$TERM" \

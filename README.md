@@ -194,7 +194,13 @@ npx @kokorolx/ai-sandbox-wrapper git full ~/projects/myrepo
 
 ### Nano-brain Auto-Repair
 
-When running nano-brain inside the sandbox, `ai-run` now performs a targeted preflight and automatic retry for common native-module failures (for example tree-sitter binding issues).
+When running nano-brain inside the sandbox, `ai-run` performs a targeted preflight and automatic retry for common native-module failures (for example tree-sitter binding issues).
+
+It also suppresses known **non-fatal** tree-sitter symbol-graph warnings when the command succeeds, so normal query output stays clean. To see suppressed diagnostics, run with debug mode (`AI_RUN_DEBUG=1`).
+
+This behavior applies to both:
+- direct mode (`ai-run npx nano-brain ...`)
+- interactive shell mode (`ai-run`, then run `npx nano-brain ...` inside the container shell)
 
 ```bash
 # Auto-repair enabled by default
@@ -205,6 +211,9 @@ ai-run npx nano-brain status --no-nano-brain-auto-repair
 
 # Disable via environment variable
 AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
+
+# Show suppressed non-fatal warning details
+AI_RUN_DEBUG=1 ai-run npx nano-brain query "hello"
 ```
 
 ### Clipboard
@@ -355,7 +364,7 @@ npx @kokorolx/ai-sandbox-wrapper clean
 | Port already in use | Stop the process or use different port |
 | Docker not found | Install and start Docker Desktop |
 | Clipboard not working | Use OSC52-compatible terminal. See [CLIPBOARD_SUPPORT.md](CLIPBOARD_SUPPORT.md) |
-| nano-brain native binding/tree-sitter error | Re-run with auto-repair (default) or manually clear npx cache; disable with `--no-nano-brain-auto-repair` if needed |
+| nano-brain native binding/tree-sitter error | Fatal errors auto-repair and retry once by default; known non-fatal symbol-graph warnings are suppressed unless `AI_RUN_DEBUG=1` |
 
 ---
 

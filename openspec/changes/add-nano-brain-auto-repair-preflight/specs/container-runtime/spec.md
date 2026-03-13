@@ -27,11 +27,22 @@ The container runtime SHALL detect known nano-brain native-binding failures (inc
 - **AND** runtime SHALL show repair status and retry outcome
 
 ### Requirement: Auto-repair transparency and opt-out
-The container runtime SHALL provide explicit logs for preflight and repair actions and support opt-out control.
+The container runtime SHALL provide explicit logs for preflight and repair actions, support opt-out control, and reduce noise from known non-fatal tree-sitter warnings.
 
 #### Scenario: Repair logs are visible
 - **WHEN** runtime performs preflight or auto-repair
 - **THEN** user SHALL see messages indicating detected issue, action taken, and result
+
+#### Scenario: Non-fatal tree-sitter warnings are suppressed on success
+- **WHEN** nano-brain exits successfully
+- **AND** stderr contains known non-fatal tree-sitter/symbol-graph warning signatures
+- **THEN** runtime SHALL suppress those warning lines in normal mode
+- **AND** runtime SHALL still return successful command output
+
+#### Scenario: Debug mode preserves suppressed diagnostics
+- **WHEN** `AI_RUN_DEBUG=1` is set
+- **AND** nano-brain emits known non-fatal tree-sitter warning signatures
+- **THEN** runtime SHALL show the captured warning diagnostics to stderr
 
 #### Scenario: Auto-repair disabled
 - **WHEN** user sets the documented opt-out flag or environment variable

@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends tmux && rm -rf 
 RUN npm install -g @kaitranntt/ccs --ignore-scripts && \
     mkdir -p /home/agent/.ccs && \
     chown -R agent:agent /home/agent/.ccs && \
-    which ccs && ccs --version
+    which ccs && ccs --version && \
+    sed -i 's/fs\.symlinkSync(sourcePath, targetPath, symlinkType)/fs\.symlinkSync(require("path").relative(require("path").dirname(targetPath), sourcePath), targetPath, symlinkType)/g' /usr/local/lib/node_modules/@kaitranntt/ccs/dist/utils/claude-symlink-manager.js
 RUN export HOME=/root && curl -fsSL https://claude.ai/install.sh | bash && \
     mkdir -p /usr/local/share && \
     mv /root/.local/share/claude /usr/local/share/claude && \
@@ -43,7 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends tmux && rm -rf 
 RUN npm install -g @kaitranntt/ccs --ignore-scripts && \
     mkdir -p /home/agent/.ccs && \
     chown -R agent:agent /home/agent/.ccs && \
-    which ccs && ccs --version
+    which ccs && ccs --version && \
+    sed -i 's/fs\.symlinkSync(sourcePath, targetPath, symlinkType)/fs\.symlinkSync(require("path").relative(require("path").dirname(targetPath), sourcePath), targetPath, symlinkType)/g' /usr/local/lib/node_modules/@kaitranntt/ccs/dist/utils/claude-symlink-manager.js
 
 # Install Claude Code using official native installer
 RUN export HOME=/root && curl -fsSL https://claude.ai/install.sh | bash && \
