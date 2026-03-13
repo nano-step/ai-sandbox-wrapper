@@ -2000,7 +2000,7 @@ configure_opencode_mcp() {
       for tool in "${all_tools[@]}"; do
         case "$tool" in
           chrome-devtools)
-            if add_mcp_config "chrome-devtools" '["chrome-devtools-mcp", "--headless", "--isolated", "--executablePath", "/opt/chromium"]'; then
+            if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
               echo "  ✓ Configured Chrome DevTools MCP"
               configured_any=true
             fi
@@ -2037,9 +2037,8 @@ configure_opencode_mcp() {
         if [[ "$tool_choice" =~ ^[Yy]$ ]]; then
           case "$tool" in
             chrome-devtools)
-              if add_mcp_config "chrome-devtools" '["chrome-devtools-mcp", "--headless", "--isolated", "--executablePath", "/opt/chromium"]'; then
+              if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
                 echo "    ✓ Configured"
-                configured_any=true
               fi
               ;;
             playwright)
@@ -2470,6 +2469,15 @@ if [[ ! -f "$CACHE_DIR/playwright-browsers/.seeded" ]]; then
   else
     touch "$CACHE_DIR/playwright-browsers/.seeded"
   fi
+fi
+
+# Resolve the latest chromium binary path from shared cache
+# The /opt/chromium symlink inside the image may point to a stale version
+CHROMIUM_PATH="/opt/chromium"
+LATEST_CHROMIUM=$(ls -d "$CACHE_DIR/playwright-browsers"/chromium-*/chrome-linux/chrome 2>/dev/null | sort -V | tail -1)
+if [[ -n "$LATEST_CHROMIUM" ]]; then
+  # Convert host cache path to container path
+  CHROMIUM_PATH="/opt/playwright-browsers/$(echo "$LATEST_CHROMIUM" | grep -oP 'chromium-[^/]+')/chrome-linux/chrome"
 fi
 
 # Detect display configuration (clipboard integration)

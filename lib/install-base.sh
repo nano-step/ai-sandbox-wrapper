@@ -175,7 +175,7 @@ RUN mkdir -p /opt/playwright-browsers && \
     npx playwright-core install --no-shell chromium && \
     npx playwright-core install-deps chromium && \
     chmod -R 777 /opt/playwright-browsers && \
-    ln -sf $(ls -d /opt/playwright-browsers/chromium-*/chrome-linux/chrome | head -1) /opt/chromium
+    ln -sf $(ls -d /opt/playwright-browsers/chromium-*/chrome-linux/chrome | sort -V | tail -1) /opt/chromium
 '
 fi
 
