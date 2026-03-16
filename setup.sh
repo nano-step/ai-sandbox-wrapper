@@ -63,13 +63,13 @@ multi_select() {
       read -rsn1 -t 1 next1
       read -rsn1 -t 1 next2
       case "$next1$next2" in
-        '[A') ((cursor--)) ;; # Up
-        '[B') ((cursor++)) ;; # Down
+        '[A') ((cursor--)) || true ;; # Up
+        '[B') ((cursor++)) || true ;; # Down
       esac
     else
       case "$key" in
-        k) ((cursor--)) ;; # k for Up
-        j) ((cursor++)) ;; # j for Down
+        k) ((cursor--)) || true ;; # k for Up
+        j) ((cursor++)) || true ;; # j for Down
         " ") # Space (toggle)
           if [ "${selected[$cursor]}" -eq 1 ]; then
             selected[$cursor]=0
@@ -137,13 +137,13 @@ single_select() {
       read -rsn1 -t 1 next1
       read -rsn1 -t 1 next2
       case "$next1$next2" in
-        '[A') ((cursor--)) ;;
-        '[B') ((cursor++)) ;;
+        '[A') ((cursor--)) || true ;;
+        '[B') ((cursor++)) || true ;;
       esac
     else
       case "$key" in
-        k) ((cursor--)) ;;
-        j) ((cursor++)) ;;
+        k) ((cursor--)) || true ;;
+        j) ((cursor++)) || true ;;
         "") break ;;
         $'\n'|$'\r') break ;;
       esac

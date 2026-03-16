@@ -1036,8 +1036,8 @@ show_network_menu() {
     if [[ "$key" == $'\x1b' ]]; then
       read -rsn2 -t 1 escape_seq
       case "$escape_seq" in
-        '[A') ((cursor > 0)) && ((cursor--)) ;;
-        '[B') ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) ;;
+        '[A') ((cursor > 0)) && ((cursor--)) || true ;;
+        '[B') ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) || true ;;
       esac
     else
       case "$key" in
@@ -1083,8 +1083,8 @@ show_network_menu() {
         ''|$'\n'|$'\r')
           break
           ;;
-        k) ((cursor > 0)) && ((cursor--)) ;;
-        j) ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) ;;
+        k) ((cursor > 0)) && ((cursor--)) || true ;;
+        j) ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) || true ;;
       esac
     fi
   done
@@ -1139,14 +1139,14 @@ show_save_prompt() {
     if [[ "$key" == $'\x1b' ]]; then
       read -rsn2 -t 1 escape_seq
       case "$escape_seq" in
-        '[A') ((cursor > 0)) && ((cursor--)) ;;
-        '[B') ((cursor < 2)) && ((cursor++)) ;;
+        '[A') ((cursor > 0)) && ((cursor--)) || true ;;
+        '[B') ((cursor < 2)) && ((cursor++)) || true ;;
       esac
     else
       case "$key" in
         ''|$'\n'|$'\r') break ;;
-        k) ((cursor > 0)) && ((cursor--)) ;;
-        j) ((cursor < 2)) && ((cursor++)) ;;
+        k) ((cursor > 0)) && ((cursor--)) || true ;;
+        j) ((cursor < 2)) && ((cursor++)) || true ;;
       esac
     fi
   done
@@ -2477,7 +2477,7 @@ CHROMIUM_PATH="/opt/chromium"
 LATEST_CHROMIUM=$(ls -d "$CACHE_DIR/playwright-browsers"/chromium-*/chrome-linux/chrome 2>/dev/null | sort -V | tail -1)
 if [[ -n "$LATEST_CHROMIUM" ]]; then
   # Convert host cache path to container path
-  CHROMIUM_PATH="/opt/playwright-browsers/$(echo "$LATEST_CHROMIUM" | grep -oP 'chromium-[^/]+')/chrome-linux/chrome"
+  CHROMIUM_PATH="/opt/playwright-browsers/$(echo "$LATEST_CHROMIUM" | grep -oE 'chromium-[^/]+')/chrome-linux/chrome"
 fi
 
 # Detect display configuration (clipboard integration)

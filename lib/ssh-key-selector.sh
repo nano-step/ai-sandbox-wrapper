@@ -127,10 +127,10 @@ select_ssh_keys() {
       read -rsn1 -t 1 next2
       case "$next1$next2" in
         '[A') # Up arrow
-          ((cursor--))
+          ((cursor--)) || true
           ;;
         '[B') # Down arrow
-          ((cursor++))
+          ((cursor++)) || true
           ;;
       esac
     # Handle regular keys
