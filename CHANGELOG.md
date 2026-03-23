@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.8] - 2026-03-23
+
+### Changed
+- **nano-brain mount: full read-write access** — Changed `~/.nano-brain` container mount from read-only (with selective rw overlays on `logs/` and `memory/`) to fully writable (`:delegated`). This allows the container to modify `config.yml`, write to all subdirectories, and run `npx nano-brain write` without requiring the daemon.
+
 ## [2.7.1] - 2026-03-02
 
 ### Fixed

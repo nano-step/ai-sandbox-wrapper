@@ -783,15 +783,12 @@ if [[ -d "$HOST_SKILLS_DIR" ]]; then
   SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/opencode/skills:ro"
 fi
 
-# Nano-brain mount: data/index read-only, logs + memory writable
-# Parent :ro protects index/sqlite/config from container writes
-# Sub-mount :rw on logs/ allows CLI logging (appendFileSync in logger.ts)
-# Sub-mount :rw on memory/ allows CLI write command (npx nano-brain write)
+# Nano-brain mount: writable so container can modify config, write memory, logs, etc.
 NANO_BRAIN_MOUNT=""
 if [[ -d "$HOME/.nano-brain" ]]; then
   mkdir -p "$HOME/.nano-brain/logs" "$HOME/.nano-brain/memory"
-  NANO_BRAIN_MOUNT="-v $HOME/.nano-brain:/home/agent/.nano-brain:ro -v $HOME/.nano-brain/logs:/home/agent/.nano-brain/logs:rw -v $HOME/.nano-brain/memory:/home/agent/.nano-brain/memory:rw"
-  echo "ℹ️  Mounted .nano-brain (ro) with logs/ + memory/ overlay (rw)"
+  NANO_BRAIN_MOUNT="-v $HOME/.nano-brain:/home/agent/.nano-brain:delegated"
+  echo "ℹ️  Mounted .nano-brain (rw)"
 fi
 
 
