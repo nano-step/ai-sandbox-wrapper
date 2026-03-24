@@ -665,7 +665,7 @@ get_tool_configs() {
   case "$1" in
     amp)       echo ".config/amp .local/share/amp" ;;
     opencode)  echo ".config/opencode .local/share/opencode" ;;
-    claude)    echo ".claude .ccs" ;;
+    claude)    echo ".claude" ;;
     openclaw)  echo ".openclaw" ;;
     droid)     echo ".config/droid" ;;
     qoder)     echo ".config/qoder" ;;

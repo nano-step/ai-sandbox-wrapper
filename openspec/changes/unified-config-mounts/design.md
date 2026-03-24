@@ -32,7 +32,7 @@ declare -A TOOL_CONFIGS
 TOOL_CONFIGS=(
   ["amp"]=".config/amp .local/share/amp"
   ["opencode"]=".config/opencode .local/share/opencode"
-  ["claude"]=".claude .ccs"
+  ["claude"]=".claude"
   ["openclaw"]=".openclaw"
   ["droid"]=".config/droid"
   ["qoder"]=".config/qoder"

@@ -61,7 +61,7 @@ When entering shell mode, the container SHALL display a welcome message listing 
 
 #### Scenario: Running claude with config mounts
 - **WHEN** user runs `ai-run claude`
-- **THEN** `~/.claude` and `~/.ccs` SHALL be mounted into the container
+- **THEN** `~/.claude` SHALL be mounted into the container
 - **AND** the mount behavior SHALL be identical to the previous per-tool image approach
 
 #### Scenario: Running shell mode with no specific tool
