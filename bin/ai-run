@@ -2296,9 +2296,27 @@ run_with_capture() {
   if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
     cat "$err_file" >&2
     echo "⚠️  Detected nano-brain native module issue."
-    echo "🔧 Running automatic repair (clearing npx/node-gyp caches)..."
+    echo "🔧 Running automatic repair (rebuilding native modules for container arch)..."
     rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
     npm cache clean --force >/dev/null 2>&1 || true
+    # Root cause: host macOS prebuilds are wrong arch for Linux container.
+    # Fix: delete wrong-arch prebuilds and reinstall to compile from source.
+    local NB_DIR
+    NB_DIR=$(dirname "$(dirname "$(readlink -f "$(which npx)")")")/lib/node_modules/nano-brain 2>/dev/null || true
+    if [[ -z "$NB_DIR" || ! -d "$NB_DIR" ]]; then
+      # npx cache location
+      NB_DIR=$(find /home/agent/.npm/_npx -maxdepth 4 -name "nano-brain" -type d 2>/dev/null | head -1)
+    fi
+    if [[ -n "$NB_DIR" && -d "$NB_DIR/node_modules" ]]; then
+      echo "  📦 Rebuilding tree-sitter in $NB_DIR..."
+      for pkg in tree-sitter-typescript tree-sitter-javascript tree-sitter-python; do
+        local prebuild_dir="$NB_DIR/node_modules/$pkg/prebuilds/linux-arm64"
+        if [[ -d "$prebuild_dir" ]]; then
+          rm -rf "$prebuild_dir"
+        fi
+      done
+      (cd "$NB_DIR" && npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python 2>/dev/null) || true
+    fi
     echo "🔁 Retrying nano-brain command once..."
     set +e
     "${ORIG_CMD[@]}"
@@ -2344,9 +2362,26 @@ nano_brain_shell_wrapper() {
   if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
     cat "$err_file" >&2
     echo "⚠️  Detected nano-brain native module issue."
-    echo "🔧 Running automatic repair (clearing npx/node-gyp caches)..."
+    echo "🔧 Running automatic repair (rebuilding native modules for container arch)..."
     rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
     npm cache clean --force >/dev/null 2>&1 || true
+    # Root cause: host macOS prebuilds are wrong arch for Linux container.
+    # Fix: delete wrong-arch prebuilds and reinstall to compile from source.
+    local NB_DIR
+    NB_DIR=$(dirname "$(dirname "$(readlink -f "$(which npx)")")")/lib/node_modules/nano-brain 2>/dev/null || true
+    if [[ -z "$NB_DIR" || ! -d "$NB_DIR" ]]; then
+      NB_DIR=$(find /home/agent/.npm/_npx -maxdepth 4 -name "nano-brain" -type d 2>/dev/null | head -1)
+    fi
+    if [[ -n "$NB_DIR" && -d "$NB_DIR/node_modules" ]]; then
+      echo "  📦 Rebuilding tree-sitter in $NB_DIR..."
+      for pkg in tree-sitter-typescript tree-sitter-javascript tree-sitter-python; do
+        local prebuild_dir="$NB_DIR/node_modules/$pkg/prebuilds/linux-arm64"
+        if [[ -d "$prebuild_dir" ]]; then
+          rm -rf "$prebuild_dir"
+        fi
+      done
+      (cd "$NB_DIR" && npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python 2>/dev/null) || true
+    fi
     echo "🔁 Retrying nano-brain command once..."
     "${ORIG_CMD[@]}"
     local retry_code=$?
