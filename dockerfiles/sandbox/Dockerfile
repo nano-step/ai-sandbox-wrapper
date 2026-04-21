@@ -6,7 +6,7 @@ FROM node:22-bookworm-slim
 
 ARG AGENT_UID=1001
 
-RUN apt-get update && apt-get install -y --no-install-recommends     git     curl     ssh     ca-certificates     jq     python3     python3-pip     python3-venv     python3-dev     python3-setuptools     build-essential     libopenblas-dev     pipx     unzip     xclip     wl-clipboard     ripgrep     tmux     fd-find     sqlite3     vim-tiny     poppler-utils     qpdf     tesseract-ocr     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh     && rm -rf /var/lib/apt/lists/*     && pipx ensurepath
+RUN apt-get update && apt-get install -y --no-install-recommends     git     curl     ssh     ca-certificates     jq     python3     python3-pip     python3-venv     python3-dev     python3-setuptools     build-essential     libopenblas-dev     pipx     unzip     xclip     wl-clipboard     ripgrep     tmux     vim-nox     fd-find     sqlite3     poppler-utils     qpdf     tesseract-ocr     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh     && rm -rf /var/lib/apt/lists/*     && pipx ensurepath
 
 # Install Python PDF processing tools for PDF skill
 RUN pip3 install --no-cache-dir --break-system-packages pypdf pdfplumber reportlab pytesseract pdf2image
@@ -105,6 +105,14 @@ USER root
 RUN curl -fsSL https://opencode.ai/install | bash && \
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /root/.opencode
+
+# === claude ===
+USER root
+RUN export HOME=/root && curl -fsSL https://claude.ai/install.sh | bash && \
+    mkdir -p /usr/local/share && \
+    mv /root/.local/share/claude /usr/local/share/claude && \
+    ln -sf /usr/local/share/claude/versions/$(ls /usr/local/share/claude/versions | head -1) /usr/local/bin/claude
+USER agent
 
 USER agent
 ENV HOME=/home/agent

@@ -218,6 +218,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wl-clipboard \
     ripgrep \
     tmux \
+    vim-nox \
     fd-find \
     sqlite3 \
     poppler-utils \
