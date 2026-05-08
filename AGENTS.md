@@ -317,9 +317,11 @@ npx nano-brain update
 ## Playwright MCP server name
 
 If the env var `PLAYWRIGHT_MCP_NAME` is set in your container shell, that is
-the MCP server you should use for browser automation. Other servers in the
-OpenCode config whose names start with `playwright_` belong to other
-containers — do not use them. If `PLAYWRIGHT_MCP_NAME` is unset, fall back to
-the server simply named `playwright` (in-container Chromium fallback).
+the MCP server you should use for browser automation. The name has the form
+`playwright_port_<port>` where `<port>` matches `$PLAYWRIGHT_PORT`. Other
+`playwright_port_*` servers in the OpenCode config belong to containers
+running on other ports — do not use them. If `PLAYWRIGHT_MCP_NAME` is unset,
+fall back to the server simply named `playwright` (in-container Chromium
+fallback).
 
 To check at runtime: `echo "$PLAYWRIGHT_MCP_NAME"` in a shell.

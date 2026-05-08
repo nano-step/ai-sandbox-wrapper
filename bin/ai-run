@@ -801,15 +801,16 @@ if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBO
     HOST_CHROME_CDP=true
     echo "🌐 Host Chrome CDP mode: $PLAYWRIGHT_HOST_CHROME"
 
-    # CONTAINER_NAME has the form "--name foo" or is empty. Extract the value.
+    # CONTAINER_NAME has the form "--name foo" or is empty. Extract the value
+    # for hashing only — the MCP key uses just the port (containers that
+    # collide on a port intentionally share the same Chrome / MCP entry).
     CONTAINER_NAME_VALUE="${CONTAINER_NAME#--name }"
     [[ "$CONTAINER_NAME_VALUE" == "$CONTAINER_NAME" ]] && CONTAINER_NAME_VALUE="anon-$$"
-    SAFE_NAME=$(pmcp::sanitize_name "$CONTAINER_NAME_VALUE")
 
     # Deterministic port per container name
     CONTAINER_HASH=$(echo "$CONTAINER_NAME_VALUE" | md5sum | cut -c1-4)
     HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
-    PLAYWRIGHT_MCP_NAME="playwright_${SAFE_NAME}_${HOST_CHROME_CDP_PORT}"
+    PLAYWRIGHT_MCP_NAME="playwright_port_${HOST_CHROME_CDP_PORT}"
 
     # Reuse-if-alive: probe before launching
     if pmcp::probe_chrome "$HOST_CHROME_CDP_PORT"; then
