@@ -42,3 +42,37 @@ pmcp::probe_chrome "$PROBE_PORT" || { echo "FAIL probe alive"; exit 1; }
 ! pmcp::probe_chrome 39872 || { echo "FAIL probe dead"; exit 1; }
 
 echo "PASS: probe_chrome"
+
+# --- Test: sweep_and_append ---
+TMPDIR=$(mktemp -d)
+trap "kill $STUB_PID 2>/dev/null || true; rm -rf '$TMPDIR'" EXIT
+CFG="$TMPDIR/opencode.json"
+LOCK="$TMPDIR/.lock"
+
+# Pre-populate config with one live (PROBE_PORT) and one dead (39999) entry
+cat > "$CFG" <<JSON
+{
+  "mcp": {
+    "playwright_alive_${PROBE_PORT}": {"type":"local","command":["playwright-mcp","--cdp-endpoint","http://192.168.65.254:${PROBE_PORT}"]},
+    "playwright_dead_39999":         {"type":"local","command":["playwright-mcp","--cdp-endpoint","http://192.168.65.254:39999"]},
+    "other_server":                  {"type":"local","command":["something-else"]}
+  }
+}
+JSON
+
+(
+  flock 9
+  pmcp::sweep_and_append "$CFG" "playwright_test_$PROBE_PORT" "$PROBE_PORT"
+) 9>"$LOCK"
+
+# After sweep+append: alive preserved, dead removed, new added, other_server untouched
+jq -e ".mcp.playwright_alive_${PROBE_PORT}" "$CFG" >/dev/null || { echo "FAIL alive removed"; exit 1; }
+jq -e ".mcp.playwright_dead_39999" "$CFG" >/dev/null && { echo "FAIL dead survived"; exit 1; }
+jq -e ".mcp.playwright_test_$PROBE_PORT" "$CFG" >/dev/null || { echo "FAIL new not added"; exit 1; }
+jq -e ".mcp.other_server" "$CFG" >/dev/null || { echo "FAIL other_server clobbered"; exit 1; }
+
+# Verify endpoint URL embedded correctly
+url=$(jq -r ".mcp.playwright_test_$PROBE_PORT.command[2]" "$CFG")
+[[ "$url" == "http://192.168.65.254:$PROBE_PORT" ]] || { echo "FAIL bad url: $url"; exit 1; }
+
+echo "PASS: sweep_and_append"
