@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.3.0-beta.0] - 2026-05-09
+
+### Fixed
+- **Multi-container Playwright MCP race** — Previously, when host Chrome (CDP) mode was active, every container booting `bin/ai-run` would overwrite the single `mcp.playwright` entry in the shared `~/.config/opencode/opencode.json`, so concurrent containers would clobber each other's CDP endpoint and end up driving the wrong Chrome.
+
+### Changed
+- **Per-container MCP entry** — Each container now registers its own `playwright_port_<port>` entry in the shared OpenCode config (append-only, never overwritten). Containers learn their own entry name via `PLAYWRIGHT_MCP_NAME` env var; `AGENTS.md` documents the convention.
+- **Locked sweep + append** — All config mutations happen inside an exclusive lock (`flock` on Linux, atomic `mkdir` mutex on macOS). Stale `playwright_port_*` entries whose ports no longer respond to a CDP probe are removed on every container start.
+- **Reuse-if-alive Chrome** — `bin/ai-run` now reuses an existing Chrome on the container's deterministic port instead of failing or launching a duplicate.
+- **`configure_opencode_mcp`** — No longer writes a static `playwright` entry under host-Chrome mode; the per-container entry handles that case.
+
+### Added
+- `lib/playwright-mcp-config.sh` — helper library: `pmcp::sanitize_name`, `pmcp::probe_chrome`, `pmcp::sweep_and_append`, `pmcp::with_lock` (portable lock).
+- `tests/playwright-mcp/sweep-append.sh` — five-test shell suite covering name sanitization, CDP probing, sweep+append correctness, lock contention, and the portable-lock primitive.
+
 ## [3.0.8] - 2026-03-23
 
 ### Changed
