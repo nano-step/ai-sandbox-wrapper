@@ -2098,12 +2098,8 @@ configure_opencode_mcp() {
           playwright)
             # Check if using host Chrome via CDP
             if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
-              # Use host Chrome via CDP (Chrome DevTools Protocol)
-              # Note: Use 192.168.65.254 instead of host.docker.internal for Docker Desktop on Mac
-              if add_mcp_config "playwright" "[\"playwright-mcp\", \"--cdp-endpoint\", \"http://192.168.65.254:9222\"]"; then
-                echo "  ✓ Configured Playwright MCP (host Chrome via CDP)"
-                configured_any=true
-              fi
+              echo "  ℹ️  Playwright MCP entry will be registered per-container at runtime (host Chrome mode)."
+              configured_any=true
             else
               # Use container Chromium
               if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
@@ -2145,11 +2141,8 @@ configure_opencode_mcp() {
             playwright)
               # Check if using host Chrome via CDP
               if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
-                # Use host Chrome via CDP
-                if add_mcp_config "playwright" "[\"playwright-mcp\", \"--cdp-endpoint\", \"http://host.docker.internal:9222\"]"; then
-                  echo "    ✓ Configured (host Chrome via CDP)"
-                  configured_any=true
-                fi
+                echo "  ℹ️  Playwright MCP entry will be registered per-container at runtime (host Chrome mode)."
+                configured_any=true
               else
                 # Use container Chromium
                 if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
