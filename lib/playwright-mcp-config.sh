@@ -81,3 +81,38 @@ pmcp::sweep_and_append() {
   fi
   echo "  ➕ pmcp: registered $name → http://$PMCP_DOCKER_HOST_IP:$port"
 }
+
+# Run a command while holding an exclusive lock on $1. Uses flock(1) if available,
+# else falls back to a mkdir-based mutex (portable across macOS where flock is
+# not built-in). Times out after 5 seconds; on timeout, returns 99 without
+# running the command. Returns the command's exit status otherwise.
+# Args: $1 = lockfile path, $2... = command + args
+pmcp::with_lock() {
+  local lockfile="$1"; shift
+  local timeout=5
+
+  if command -v flock >/dev/null 2>&1; then
+    (
+      flock -w "$timeout" 9 || exit 99
+      "$@"
+    ) 9>"$lockfile"
+    return $?
+  fi
+
+  # mkdir-based fallback. mkdir is atomic on POSIX filesystems.
+  local mutex="${lockfile}.d"
+  local waited=0
+  while ! mkdir "$mutex" 2>/dev/null; do
+    if (( waited >= timeout * 10 )); then
+      return 99
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  trap "rmdir '$mutex' 2>/dev/null || true" EXIT
+  "$@"
+  local rc=$?
+  rmdir "$mutex" 2>/dev/null || true
+  trap - EXIT
+  return $rc
+}

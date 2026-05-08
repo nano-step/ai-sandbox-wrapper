@@ -95,4 +95,28 @@ count=$(jq '[.mcp | keys[] | select(startswith("playwright_concurrent_"))] | len
 [[ "$count" == "5" ]] || { echo "FAIL concurrent: got $count entries, expected 5"; jq . "$CFG2"; exit 1; }
 
 echo "PASS: concurrent"
+
+# --- Test: with_lock works (flock or mkdir fallback) ---
+LOCK3="$TMPDIR/.lock3"
+GUARDED_FILE="$TMPDIR/guarded.txt"
+echo 0 > "$GUARDED_FILE"
+
+# Increment guarded file from 5 concurrent processes
+increment() {
+  local current next
+  current=$(cat "$GUARDED_FILE")
+  sleep 0.05
+  next=$((current + 1))
+  echo "$next" > "$GUARDED_FILE"
+}
+
+for i in 1 2 3 4 5; do
+  pmcp::with_lock "$LOCK3" increment &
+done
+wait
+
+final=$(cat "$GUARDED_FILE")
+[[ "$final" == "5" ]] || { echo "FAIL with_lock: got $final, expected 5"; exit 1; }
+echo "PASS: with_lock"
+
 echo "All tests passed."
