@@ -783,6 +783,69 @@ if [[ -d "$HOST_SKILLS_DIR" ]]; then
   SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/opencode/skills:ro"
 fi
 
+# Host Chrome for Playwright MCP (via CDP - Chrome DevTools Protocol)
+# NOTE: macOS Chrome binary (Mach-O) cannot run inside a Linux container.
+# Instead, we launch Chrome on the host with --remote-debugging-port and
+# connect from the container via CDP.
+HOST_CHROME_CDP=false
+HOST_CHROME_CDP_PORT=19222
+if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+  PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+    HOST_CHROME_CDP=true
+    echo "🌐 Host Chrome CDP mode: $PLAYWRIGHT_HOST_CHROME"
+    
+    # Generate unique port for this container (to allow multiple containers)
+    # Use container name hash or timestamp-based port
+    CONTAINER_HASH=$(echo "$CONTAINER_NAME" | md5sum | cut -c1-4)
+    HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
+    
+    # Check if Chrome is already running with remote debugging on this port
+    if ! curl -s "http://localhost:$HOST_CHROME_CDP_PORT/json/version" &>/dev/null; then
+      echo "  🚀 Launching Chrome with remote debugging on port $HOST_CHROME_CDP_PORT..."
+      # Launch Chrome in headed mode (visible window) so user can see what AI is doing
+      # Use separate user-data-dir to avoid "Who's using Chrome?" profile picker
+      mkdir -p "$SANDBOX_DIR/chrome-profile-$HOST_CHROME_CDP_PORT"
+      "$PLAYWRIGHT_HOST_CHROME" \
+        --remote-debugging-port="$HOST_CHROME_CDP_PORT" \
+        --user-data-dir="$SANDBOX_DIR/chrome-profile-$HOST_CHROME_CDP_PORT" \
+        --no-first-run \
+        --no-default-browser-check \
+        &>/dev/null &
+      CHROME_PID=$!
+      # Wait for Chrome to start (up to 5 seconds)
+      for i in {1..20}; do
+        if curl -s "http://localhost:$HOST_CHROME_CDP_PORT/json/version" &>/dev/null; then
+          echo "  ✅ Chrome ready (PID: $CHROME_PID, port: $HOST_CHROME_CDP_PORT)"
+          echo "  👀 You can watch the browser window to see what the AI is doing"
+          break
+        fi
+        sleep 0.25
+      done
+      if ! curl -s "http://localhost:$HOST_CHROME_CDP_PORT/json/version" &>/dev/null; then
+        echo "  ⚠️  Chrome failed to start. Falling back to container Chromium."
+        HOST_CHROME_CDP=false
+        kill "$CHROME_PID" 2>/dev/null || true
+      fi
+    else
+      echo "  ✅ Chrome already running on port $HOST_CHROME_CDP_PORT"
+    fi
+    
+    # Ensure OpenCode MCP config points to host Chrome CDP
+    OPENCODE_CONFIG_FILE="$HOME/.config/opencode/opencode.json"
+    if has_jq && [[ -f "$OPENCODE_CONFIG_FILE" ]]; then
+      CURRENT_CDP=$(jq -r '.mcp.playwright.command // [] | join(" ")' "$OPENCODE_CONFIG_FILE" 2>/dev/null)
+      if [[ "$CURRENT_CDP" != *"192.168.65.254:$HOST_CHROME_CDP_PORT"* ]]; then
+        jq --arg port "$HOST_CHROME_CDP_PORT" \
+          '.mcp.playwright = {"type": "local", "command": ["playwright-mcp", "--cdp-endpoint", "http://192.168.65.254:\($port)"]}' \
+          "$OPENCODE_CONFIG_FILE" > "$OPENCODE_CONFIG_FILE.tmp" && mv "$OPENCODE_CONFIG_FILE.tmp" "$OPENCODE_CONFIG_FILE"
+        chmod 600 "$OPENCODE_CONFIG_FILE"
+        echo "  📝 Updated OpenCode MCP config → http://192.168.65.254:$HOST_CHROME_CDP_PORT"
+      fi
+    fi
+  fi
+fi
+
 # Nano-brain mount: writable so container can modify config, write memory, logs, etc.
 NANO_BRAIN_MOUNT=""
 if [[ -d "$HOME/.nano-brain" ]]; then
@@ -1921,6 +1984,12 @@ configure_opencode_mcp() {
     is_mcp_configured "playwright" && playwright_configured=true
   fi
 
+  # Get host Chrome path if using playwright-host
+  local PLAYWRIGHT_HOST_CHROME=""
+  if command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  fi
+
   # If no MCP tools installed in image, return
   if [[ "$chrome_installed" == "false" && "$playwright_installed" == "false" ]]; then
     return 0
@@ -1957,7 +2026,11 @@ configure_opencode_mcp() {
           echo "  ✓ Chrome DevTools MCP"
           ;;
         playwright)
-          echo "  ✓ Playwright MCP"
+          if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+            echo "  ✓ Playwright MCP (host Chrome)"
+          else
+            echo "  ✓ Playwright MCP"
+          fi
           ;;
       esac
     done
@@ -1973,7 +2046,11 @@ configure_opencode_mcp() {
           echo "  • Chrome DevTools MCP - browser automation + performance profiling"
           ;;
         playwright)
-          echo "  • Playwright MCP - multi-browser automation"
+          if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+            echo "  • Playwright MCP (host Chrome) - use your installed Chrome browser"
+          else
+            echo "  • Playwright MCP - multi-browser automation"
+          fi
           ;;
       esac
     done
@@ -2006,9 +2083,20 @@ configure_opencode_mcp() {
             fi
             ;;
           playwright)
-            if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
-              echo "  ✓ Configured Playwright MCP"
-              configured_any=true
+            # Check if using host Chrome via CDP
+            if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+              # Use host Chrome via CDP (Chrome DevTools Protocol)
+              # Note: Use 192.168.65.254 instead of host.docker.internal for Docker Desktop on Mac
+              if add_mcp_config "playwright" "[\"playwright-mcp\", \"--cdp-endpoint\", \"http://192.168.65.254:9222\"]"; then
+                echo "  ✓ Configured Playwright MCP (host Chrome via CDP)"
+                configured_any=true
+              fi
+            else
+              # Use container Chromium
+              if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
+                echo "  ✓ Configured Playwright MCP"
+                configured_any=true
+              fi
             fi
             ;;
         esac
@@ -2042,9 +2130,19 @@ configure_opencode_mcp() {
               fi
               ;;
             playwright)
-              if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
-                echo "    ✓ Configured"
-                configured_any=true
+              # Check if using host Chrome via CDP
+              if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+                # Use host Chrome via CDP
+                if add_mcp_config "playwright" "[\"playwright-mcp\", \"--cdp-endpoint\", \"http://host.docker.internal:9222\"]"; then
+                  echo "    ✓ Configured (host Chrome via CDP)"
+                  configured_any=true
+                fi
+              else
+                # Use container Chromium
+                if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
+                  echo "    ✓ Configured"
+                  configured_any=true
+                fi
               fi
               ;;
           esac
@@ -2581,27 +2679,34 @@ EOF
     up --remove-orphans
 fi
 
-docker run $CONTAINER_NAME --rm $TTY_FLAGS \
-  --init \
-  --platform "$PLATFORM" \
-  $ENTRYPOINT_OVERRIDE \
-  $VOLUME_MOUNTS \
-  $CONFIG_MOUNT \
-  $TOOL_CONFIG_MOUNTS \
-  $RG_COMPAT_MOUNT \
-  $GIT_MOUNTS \
-  $SSH_AGENT_ENV \
-  $NETWORK_OPTIONS \
-  $DISPLAY_FLAGS \
-  $HOST_ACCESS_ARGS \
-  $PORT_MAPPINGS \
-  $OPENCODE_PASSWORD_ENV \
-  -v "$HOME_DIR":/home/agent \
-  $SHARED_CACHE_MOUNTS \
-  $NANO_BRAIN_MOUNT \
-  -w "$CURRENT_DIR" \
-  --env-file "$ENV_FILE" \
-  -e TERM="$TERM" \
-  -e COLORTERM="$COLORTERM" \
-  $TERMINAL_SIZE \
-  "$IMAGE" "${DOCKER_COMMAND[@]}"
+# Build docker run arguments as an array (handles paths with spaces correctly)
+DOCKER_ARGS=()
+DOCKER_ARGS+=($CONTAINER_NAME --rm $TTY_FLAGS)
+DOCKER_ARGS+=(--init)
+DOCKER_ARGS+=(--platform "$PLATFORM")
+DOCKER_ARGS+=($ENTRYPOINT_OVERRIDE)
+DOCKER_ARGS+=($VOLUME_MOUNTS)
+DOCKER_ARGS+=($CONFIG_MOUNT)
+DOCKER_ARGS+=($TOOL_CONFIG_MOUNTS)
+DOCKER_ARGS+=($RG_COMPAT_MOUNT)
+DOCKER_ARGS+=($GIT_MOUNTS)
+DOCKER_ARGS+=($SSH_AGENT_ENV)
+DOCKER_ARGS+=($NETWORK_OPTIONS)
+DOCKER_ARGS+=($DISPLAY_FLAGS)
+DOCKER_ARGS+=($HOST_ACCESS_ARGS)
+DOCKER_ARGS+=($PORT_MAPPINGS)
+DOCKER_ARGS+=($OPENCODE_PASSWORD_ENV)
+DOCKER_ARGS+=(-v "$HOME_DIR":/home/agent)
+DOCKER_ARGS+=($SHARED_CACHE_MOUNTS)
+DOCKER_ARGS+=($NANO_BRAIN_MOUNT)
+DOCKER_ARGS+=(-w "$CURRENT_DIR")
+DOCKER_ARGS+=(--env-file "$ENV_FILE")
+DOCKER_ARGS+=(-e TERM="$TERM")
+DOCKER_ARGS+=(-e COLORTERM="$COLORTERM")
+DOCKER_ARGS+=($TERMINAL_SIZE)
+
+DOCKER_ARGS+=("$IMAGE")
+DOCKER_ARGS+=("${DOCKER_COMMAND[@]}")
+
+# Execute docker run with proper argument handling
+docker run "${DOCKER_ARGS[@]}"
