@@ -76,3 +76,23 @@ url=$(jq -r ".mcp.playwright_test_$PROBE_PORT.command[2]" "$CFG")
 [[ "$url" == "http://192.168.65.254:$PROBE_PORT" ]] || { echo "FAIL bad url: $url"; exit 1; }
 
 echo "PASS: sweep_and_append"
+
+# --- Test: concurrent appenders preserve all writes ---
+CFG2="$TMPDIR/opencode2.json"
+LOCK2="$TMPDIR/.lock2"
+echo '{"mcp":{}}' > "$CFG2"
+
+# Launch 5 background appenders, each adding a unique key (using PROBE_PORT for liveness)
+for i in 1 2 3 4 5; do
+  (
+    flock 9
+    pmcp::sweep_and_append "$CFG2" "playwright_concurrent_$i" "$PROBE_PORT"
+  ) 9>"$LOCK2" &
+done
+wait
+
+count=$(jq '[.mcp | keys[] | select(startswith("playwright_concurrent_"))] | length' "$CFG2")
+[[ "$count" == "5" ]] || { echo "FAIL concurrent: got $count entries, expected 5"; jq . "$CFG2"; exit 1; }
+
+echo "PASS: concurrent"
+echo "All tests passed."

@@ -60,11 +60,11 @@ pmcp::sweep_and_append() {
   local tmp="$cfg.tmp.$$"
   local args=()
   local i=0
-  for k in "${dead_keys[@]}"; do
+  for k in "${dead_keys[@]+"${dead_keys[@]}"}"; do
     args+=(--arg "k$i" "$k")
     i=$((i + 1))
   done
-  jq "${args[@]}" --arg name "$name" --arg host "$PMCP_DOCKER_HOST_IP" --arg port "$port" \
+  jq "${args[@]+"${args[@]}"}" --arg name "$name" --arg host "$PMCP_DOCKER_HOST_IP" --arg port "$port" \
     '
       def setup($args; $name; $host; $port):
         .mcp = (.mcp // {})
