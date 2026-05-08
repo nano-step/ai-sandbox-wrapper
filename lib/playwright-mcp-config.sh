@@ -14,3 +14,14 @@ pmcp::sanitize_name() {
   fi
   printf '%s' "$input" | tr -c 'A-Za-z0-9_-' '_'
 }
+
+# Probe a port for a valid Chrome CDP endpoint. Returns 0 if /json/version
+# responds with JSON containing a "Browser" field within the timeout.
+# Args: $1 = port
+pmcp::probe_chrome() {
+  local port="$1"
+  local body
+  body=$(curl -fsS --max-time 0.5 "http://localhost:$port/json/version" 2>/dev/null) || return 1
+  [[ "$body" == *'"Browser"'* ]] || return 1
+  return 0
+}
