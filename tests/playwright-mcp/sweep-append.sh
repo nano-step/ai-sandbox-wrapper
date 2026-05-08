@@ -36,7 +36,11 @@ import time; time.sleep(60)
 " &
 STUB_PID=$!
 trap "kill $STUB_PID 2>/dev/null || true" EXIT
-sleep 0.3
+# Wait for the python stub to start listening (up to 5s).
+for _ in $(seq 1 50); do
+  curl -fsS --max-time 0.2 "http://localhost:$PROBE_PORT/json/version" >/dev/null 2>&1 && break
+  sleep 0.1
+done
 
 pmcp::probe_chrome "$PROBE_PORT" || { echo "FAIL probe alive"; exit 1; }
 ! pmcp::probe_chrome 39872 || { echo "FAIL probe dead"; exit 1; }
