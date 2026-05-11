@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.2] - 2026-05-11
+
+### Added
+- **`rebuild` command** — `npx @kokorolx/ai-sandbox-wrapper rebuild` rebuilds the Docker image using
+  the existing `~/.ai-sandbox/config.json` without going through the interactive setup menu.
+  Reads `tools.installed` and `mcp.installed` from config and maps them to the correct `INSTALL_*`
+  flags automatically. Supports `--no-cache` to bypass Docker layer cache.
+
+### Fixed
+- **`setup.sh` ignores `INSTALL_*` env vars** — Previously `setup.sh` hardcoded all `INSTALL_*`
+  flags to `0` at the start of the build block, silently discarding any env vars passed by the
+  caller (e.g. `INSTALL_CHROME_DEVTOOLS_MCP=1 npx ... setup`). Now uses `${VAR:-0}` so
+  caller-supplied values are respected.
+
 ## [3.4.1] - 2026-05-11
 
 ### Fixed

@@ -21,6 +21,7 @@ Usage:
 
 Commands:
   setup                 Run interactive setup (configure workspaces, select tools)
+  rebuild               Rebuild Docker image using existing config (no menu required)
   update                Interactive menu to manage config (workspaces, git, networks)
   clean                 Interactive cleanup for caches/configs
   clean cache [type]    Clear shared package caches (npm, bun, pip, playwright-browsers)
@@ -51,6 +52,8 @@ Options:
 
 Examples:
   npx @kokorolx/ai-sandbox-wrapper setup
+  npx @kokorolx/ai-sandbox-wrapper rebuild
+  npx @kokorolx/ai-sandbox-wrapper rebuild --no-cache
   npx @kokorolx/ai-sandbox-wrapper update
   npx @kokorolx/ai-sandbox-wrapper config show --json
   npx @kokorolx/ai-sandbox-wrapper config tool claude
@@ -100,6 +103,69 @@ function runSetup() {
     } else {
       console.error('❌ Error running setup:', err.message);
     }
+    process.exit(1);
+  });
+
+  child.on('close', (code) => {
+    process.exit(code || 0);
+  });
+}
+
+function runRebuild() {
+  const buildScript = path.join(packageRoot, 'lib', 'build-sandbox.sh');
+
+  if (!fs.existsSync(buildScript)) {
+    console.error('❌ Error: lib/build-sandbox.sh not found at', buildScript);
+    process.exit(1);
+  }
+
+  const config = readConfig();
+  const toolsInstalled = (config.tools && config.tools.installed) || [];
+  const mcpInstalled = (config.mcp && config.mcp.installed) || [];
+
+  if (toolsInstalled.length === 0) {
+    console.error('❌ No tools found in ~/.ai-sandbox/config.json');
+    console.error('   Run `npx @kokorolx/ai-sandbox-wrapper setup` first.');
+    process.exit(1);
+  }
+
+  const hasMcp = (name) => mcpInstalled.includes(name);
+  const useHostChrome = !!(config.mcp && config.mcp.chromePath);
+
+  const buildEnv = {
+    ...process.env,
+    TOOLS: toolsInstalled.join(','),
+    INSTALL_PLAYWRIGHT_MCP: hasMcp('playwright') ? '1' : '0',
+    INSTALL_CHROME_DEVTOOLS_MCP: hasMcp('chrome-devtools') ? '1' : '0',
+    INSTALL_PLAYWRIGHT_HOST: useHostChrome ? '1' : '0',
+    INSTALL_RTK: '0',
+    INSTALL_SPEC_KIT: '0',
+    INSTALL_UX_UI_PROMAX: '0',
+    INSTALL_OPENSPEC: '0',
+    INSTALL_PLAYWRIGHT: '0',
+    INSTALL_RUBY: '0'
+  };
+  if (flags.noCache) {
+    buildEnv.DOCKER_NO_CACHE = '1';
+  }
+
+  console.log('🔨 Rebuilding Docker image with current config...');
+  console.log(`   Tools: ${toolsInstalled.join(', ')}`);
+  if (mcpInstalled.length > 0) {
+    console.log(`   MCP: ${mcpInstalled.join(', ')}`);
+  }
+  if (flags.noCache) {
+    console.log('   --no-cache: skipping Docker layer cache');
+  }
+
+  const child = spawn('bash', [buildScript], {
+    cwd: packageRoot,
+    stdio: 'inherit',
+    env: buildEnv
+  });
+
+  child.on('error', (err) => {
+    console.error('❌ Error running rebuild:', err.message);
     process.exit(1);
   });
 
@@ -1312,6 +1378,9 @@ switch (command) {
   case 'setup':
   case undefined:
     runSetup();
+    break;
+  case 'rebuild':
+    runRebuild();
     break;
   case 'help':
   case '--help':
