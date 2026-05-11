@@ -314,14 +314,25 @@ npx nano-brain update
 **Only skip OpenSpec for:** typo fixes, dependency bumps, or single-line config changes.
 
 
-## Playwright MCP server name
+## Host-Chrome MCP server names
 
-If the env var `PLAYWRIGHT_MCP_NAME` is set in your container shell, that is
-the MCP server you should use for browser automation. The name has the form
-`playwright_port_<port>` where `<port>` matches `$PLAYWRIGHT_PORT`. Other
-`playwright_port_*` servers in the OpenCode config belong to containers
-running on other ports — do not use them. If `PLAYWRIGHT_MCP_NAME` is unset,
-fall back to the server simply named `playwright` (in-container Chromium
-fallback).
+When host Chrome CDP mode is active, this container has two MCP servers
+pointing at the same visible host Chrome instance. Their names are
+provided via env vars:
 
-To check at runtime: `echo "$PLAYWRIGHT_MCP_NAME"` in a shell.
+- **`$PLAYWRIGHT_MCP_NAME`** (form `playwright_port_<port>`) — the
+  Playwright MCP server. Use it for browser automation.
+- **`$CHROME_DEVTOOLS_MCP_NAME`** (form `chrome-devtools_port_<port>`) —
+  the Chrome DevTools MCP server. Use it for performance profiling,
+  network inspection, console reading.
+
+Both port numbers match `$PLAYWRIGHT_PORT` (the same Chrome). Other
+`playwright_port_*` / `chrome-devtools_port_*` entries in the OpenCode
+config belong to other containers — do not use them.
+
+If `$PLAYWRIGHT_MCP_NAME` is unset, host-Chrome mode wasn't enabled —
+fall back to the server named `playwright` (in-container Chromium) or
+`chrome-devtools` accordingly.
+
+To check at runtime: `echo "$PLAYWRIGHT_MCP_NAME"` and
+`echo "$CHROME_DEVTOOLS_MCP_NAME"` in a shell.

@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.0] - 2026-05-11
+
+### Added
+- **Chrome DevTools MCP host-Chrome support** — `chrome-devtools-mcp`
+  can now drive the same visible host Chrome that Playwright MCP
+  uses. Each container gets a paired `chrome-devtools_port_<port>`
+  entry alongside `playwright_port_<port>`, both pointing at the same
+  CDP endpoint. Chrome DevTools MCP connects via `--browserUrl`.
+- **`CHROME_DEVTOOLS_MCP_NAME`** env var passed into the container so
+  the agent knows its own entry (mirrors `PLAYWRIGHT_MCP_NAME`).
+- `pmcp::sweep_dead` and `pmcp::register` helpers (prefix-aware,
+  reusable across MCP server types).
+- `pmcp::register_host_chrome` registers both entries atomically under
+  one lock.
+
+### Changed
+- `configure_opencode_mcp` now skips the static `chrome-devtools`
+  entry under host-Chrome mode (same treatment as `playwright`).
+- AGENTS.md documents both env vars.
+
+### Notes
+- Both MCP servers share one Chrome process. Two CDP clients on one
+  Chrome works correctly — they create separate browser contexts.
+- The existing token-cost optimization TODO (`docs/TODO-playwright-mcp.md`)
+  now applies to both prefixes; same solution covers both.
+
 ## [3.3.0-beta.1] - 2026-05-11
 
 ### Fixed

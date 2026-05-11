@@ -791,6 +791,7 @@ fi
 HOST_CHROME_CDP=false
 HOST_CHROME_CDP_PORT=19222
 PLAYWRIGHT_MCP_NAME=""
+CHROME_DEVTOOLS_MCP_NAME=""
 # Portable symlink-resolving SCRIPT_DIR (macOS readlink has no -f).
 # Needed because ai-run is typically invoked via the ~/bin/ai-run symlink.
 _pmcp_resolve_script_dir() {
@@ -823,6 +824,7 @@ if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBO
     CONTAINER_HASH=$(echo "$CONTAINER_NAME_VALUE" | md5sum | cut -c1-4)
     HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
     PLAYWRIGHT_MCP_NAME="playwright_port_${HOST_CHROME_CDP_PORT}"
+    CHROME_DEVTOOLS_MCP_NAME="chrome-devtools_port_${HOST_CHROME_CDP_PORT}"
 
     # Reuse-if-alive: probe before launching
     if pmcp::probe_chrome "$HOST_CHROME_CDP_PORT"; then
@@ -850,23 +852,29 @@ if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBO
         HOST_CHROME_CDP=false
         kill "$CHROME_PID" 2>/dev/null || true
         PLAYWRIGHT_MCP_NAME=""
+        CHROME_DEVTOOLS_MCP_NAME=""
       fi
     fi
 
-    # Locked sweep+append on the shared OpenCode config
+    # Locked sweep+register on the shared OpenCode config — both
+    # playwright-mcp and chrome-devtools-mcp point at the same host Chrome.
     if [[ "$HOST_CHROME_CDP" == "true" ]]; then
       OPENCODE_CONFIG_FILE="$HOME/.config/opencode/opencode.json"
       LOCK_FILE="$HOME/.config/opencode/.playwright.lock"
       mkdir -p "$(dirname "$OPENCODE_CONFIG_FILE")"
       [[ -f "$OPENCODE_CONFIG_FILE" ]] || echo '{}' > "$OPENCODE_CONFIG_FILE"
-      pmcp::with_lock "$LOCK_FILE" pmcp::sweep_and_append "$OPENCODE_CONFIG_FILE" "$PLAYWRIGHT_MCP_NAME" "$HOST_CHROME_CDP_PORT"
+      pmcp::with_lock "$LOCK_FILE" pmcp::register_host_chrome \
+        "$OPENCODE_CONFIG_FILE" "$HOST_CHROME_CDP_PORT" \
+        "$PLAYWRIGHT_MCP_NAME" "$CHROME_DEVTOOLS_MCP_NAME"
       rc=$?
       if [[ "$rc" == "99" ]]; then
         echo "  ⚠️  Could not acquire MCP config lock within 5s; skipping registration."
         PLAYWRIGHT_MCP_NAME=""
+        CHROME_DEVTOOLS_MCP_NAME=""
       elif [[ "$rc" != "0" ]]; then
         echo "  ⚠️  MCP config update failed (rc=$rc); skipping registration."
         PLAYWRIGHT_MCP_NAME=""
+        CHROME_DEVTOOLS_MCP_NAME=""
       fi
     fi
   fi
@@ -2103,9 +2111,16 @@ configure_opencode_mcp() {
       for tool in "${all_tools[@]}"; do
         case "$tool" in
           chrome-devtools)
-            if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
-              echo "  ✓ Configured Chrome DevTools MCP"
+            # Skip static entry under host Chrome mode — per-container
+            # chrome-devtools_port_<port> entry is registered at runtime.
+            if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+              echo "  ℹ️  Chrome DevTools MCP entry will be registered per-container at runtime (host Chrome mode)."
               configured_any=true
+            else
+              if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
+                echo "  ✓ Configured Chrome DevTools MCP"
+                configured_any=true
+              fi
             fi
             ;;
           playwright)
@@ -2147,8 +2162,13 @@ configure_opencode_mcp() {
         if [[ "$tool_choice" =~ ^[Yy]$ ]]; then
           case "$tool" in
             chrome-devtools)
-              if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
-                echo "    ✓ Configured"
+              if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+                echo "    ℹ️  Chrome DevTools MCP entry will be registered per-container at runtime (host Chrome mode)."
+                configured_any=true
+              else
+                if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
+                  echo "    ✓ Configured"
+                fi
               fi
               ;;
             playwright)
@@ -2725,6 +2745,9 @@ DOCKER_ARGS+=(-e COLORTERM="$COLORTERM")
 if [[ -n "${PLAYWRIGHT_MCP_NAME:-}" ]]; then
   DOCKER_ARGS+=(-e "PLAYWRIGHT_MCP_NAME=$PLAYWRIGHT_MCP_NAME")
   DOCKER_ARGS+=(-e "PLAYWRIGHT_PORT=$HOST_CHROME_CDP_PORT")
+fi
+if [[ -n "${CHROME_DEVTOOLS_MCP_NAME:-}" ]]; then
+  DOCKER_ARGS+=(-e "CHROME_DEVTOOLS_MCP_NAME=$CHROME_DEVTOOLS_MCP_NAME")
 fi
 DOCKER_ARGS+=($TERMINAL_SIZE)
 
