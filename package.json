@@ -23,7 +23,9 @@
   },
   "license": "MIT",
   "author": "kokorolx",
-  "bin": "./bin/cli.js",
+  "bin": {
+    "ai-sandbox-wrapper": "bin/cli.js"
+  },
   "files": [
     "bin/",
     "lib/",
