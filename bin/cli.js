@@ -8,7 +8,7 @@ const readline = require('readline');
 
 const args = process.argv.slice(2);
 const packageRoot = path.resolve(__dirname, '..');
-const flags = { noCache: args.includes('--no-cache') };
+const flags = { noCache: args.includes('--no-cache') || args.includes('--fresh') };
 const positionalArgs = args.filter(arg => !arg.startsWith('--'));
 const command = positionalArgs[0];
 
@@ -21,7 +21,7 @@ Usage:
 
 Commands:
   setup                 Run interactive setup (configure workspaces, select tools)
-  rebuild               Rebuild Docker image using existing config (no menu required)
+  rebuild [--fresh]     Rebuild Docker image using existing config (no menu required)
   update                Interactive menu to manage config (workspaces, git, networks)
   clean                 Interactive cleanup for caches/configs
   clean cache [type]    Clear shared package caches (npm, bun, pip, playwright-browsers)
@@ -45,7 +45,8 @@ Commands:
   help                  Show this help message
 
 Options:
-  --no-cache    Build Docker images without using cache (fresh build)
+  --fresh       Build Docker image without using layer cache (full rebuild)
+  --no-cache    Alias for --fresh (note: use --fresh when running via npx)
   --json        Output in JSON format (for config show)
   --global      Apply to global scope (for network commands)
   --workspace   Apply to specific workspace (for network commands)
@@ -53,7 +54,7 @@ Options:
 Examples:
   npx @kokorolx/ai-sandbox-wrapper setup
   npx @kokorolx/ai-sandbox-wrapper rebuild
-  npx @kokorolx/ai-sandbox-wrapper rebuild --no-cache
+  npx @kokorolx/ai-sandbox-wrapper rebuild --fresh
   npx @kokorolx/ai-sandbox-wrapper update
   npx @kokorolx/ai-sandbox-wrapper config show --json
   npx @kokorolx/ai-sandbox-wrapper config tool claude

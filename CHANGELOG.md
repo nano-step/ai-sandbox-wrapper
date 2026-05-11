@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.3] - 2026-05-11
+
+### Fixed
+- **`rebuild --fresh` replaces `--no-cache`** — `npx` consumes `--no-cache` as its own flag
+  before passing arguments to the CLI script, so `rebuild --no-cache` never triggered a
+  Docker cache-busting build. Renamed to `--fresh` which npx does not intercept.
+  `--no-cache` is kept as an alias for non-npx usage.
+
 ## [3.4.2] - 2026-05-11
 
 ### Added
