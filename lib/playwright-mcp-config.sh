@@ -88,20 +88,25 @@ pmcp::register() {
   echo "  ➕ pmcp: registered $key"
 }
 
-# Register both playwright-mcp and chrome-devtools-mcp for a host Chrome on
+# Register playwright-mcp and/or chrome-devtools-mcp for a host Chrome on
 # a given CDP port. Sweeps dead entries of both prefixes first, then writes
-# the new entries. MUST be called inside a flock.
-# Args: $1 = cfg, $2 = port, $3 = playwright key, $4 = chrome-devtools key
+# the requested entries. Pass empty string for a key to skip that one.
+# MUST be called inside a flock.
+# Args: $1 = cfg, $2 = port, $3 = playwright key (or ""), $4 = chrome-devtools key (or "")
 pmcp::register_host_chrome() {
   local cfg="$1" port="$2" pw_key="$3" cd_key="$4"
   local url="http://$PMCP_DOCKER_HOST_IP:$port"
 
   pmcp::sweep_dead "$cfg" "playwright_"
   pmcp::sweep_dead "$cfg" "chrome-devtools_"
-  pmcp::register "$cfg" "$pw_key" \
-    "[\"playwright-mcp\",\"--cdp-endpoint\",\"$url\"]"
-  pmcp::register "$cfg" "$cd_key" \
-    "[\"chrome-devtools-mcp\",\"--browserUrl\",\"$url\"]"
+  if [[ -n "$pw_key" ]]; then
+    pmcp::register "$cfg" "$pw_key" \
+      "[\"playwright-mcp\",\"--cdp-endpoint\",\"$url\"]"
+  fi
+  if [[ -n "$cd_key" ]]; then
+    pmcp::register "$cfg" "$cd_key" \
+      "[\"chrome-devtools-mcp\",\"--browserUrl\",\"$url\"]"
+  fi
 }
 
 # Sweep dead playwright_* entries and append a new one. MUST be called inside

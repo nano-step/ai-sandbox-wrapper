@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.1] - 2026-05-11
+
+### Fixed
+- **Skip MCP entry registration when binary isn't in the image** — 3.4.0
+  always registered both `playwright_port_*` and `chrome-devtools_port_*`
+  entries under host-Chrome mode, regardless of which MCP binaries were
+  actually installed in the container image. When OpenCode tried to spawn
+  a missing binary the MCP server would fail. `bin/ai-run` now consults
+  `$AI_SANDBOX_CONFIG` (`mcp.installed`) and only registers the entries
+  whose binaries are listed. `pmcp::register_host_chrome` now treats an
+  empty key as "skip this one".
+
 ## [3.4.0] - 2026-05-11
 
 ### Added

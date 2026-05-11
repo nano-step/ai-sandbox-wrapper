@@ -90,13 +90,17 @@ LOCK2="$TMPDIR/.lock2"
 echo '{"mcp":{}}' > "$CFG2"
 
 # Launch 5 background appenders, each adding a unique key (using PROBE_PORT for liveness)
+concurrent_pids=()
 for i in 1 2 3 4 5; do
   (
     flock 9
     pmcp::sweep_and_append "$CFG2" "playwright_concurrent_$i" "$PROBE_PORT"
   ) 9>"$LOCK2" &
+  concurrent_pids+=($!)
 done
-wait
+# Wait only for these specific PIDs — bare `wait` would also wait on the
+# stub HTTP server (sleeping 300s) and hang the test.
+wait "${concurrent_pids[@]}"
 
 count=$(jq '[.mcp | keys[] | select(startswith("playwright_concurrent_"))] | length' "$CFG2")
 [[ "$count" == "5" ]] || { echo "FAIL concurrent: got $count entries, expected 5"; jq . "$CFG2"; exit 1; }
@@ -117,10 +121,12 @@ increment() {
   echo "$next" > "$GUARDED_FILE"
 }
 
+withlock_pids=()
 for i in 1 2 3 4 5; do
   pmcp::with_lock "$LOCK3" increment &
+  withlock_pids+=($!)
 done
-wait
+wait "${withlock_pids[@]}"
 
 final=$(cat "$GUARDED_FILE")
 [[ "$final" == "5" ]] || { echo "FAIL with_lock: got $final, expected 5"; exit 1; }
