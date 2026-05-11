@@ -29,6 +29,81 @@ pmcp::probe_chrome() {
 # Host address from container (Docker Desktop on Mac).
 PMCP_DOCKER_HOST_IP="${PMCP_DOCKER_HOST_IP:-192.168.65.254}"
 
+# Probe and remove .mcp.<prefix>* entries whose CDP port is no longer alive.
+# Used to garbage-collect stale per-container Chrome MCP entries.
+# Args: $1 = config file path, $2 = key prefix (e.g. "playwright_", "chrome-devtools_")
+pmcp::sweep_dead() {
+  local cfg="$1" prefix="$2"
+  [[ -f "$cfg" ]] || return 0
+
+  local keys dead_keys=()
+  keys=$(jq -r --arg p "$prefix" '(.mcp // {}) | keys[] | select(startswith($p))' "$cfg" 2>/dev/null || true)
+  while IFS= read -r key; do
+    [[ -z "$key" ]] && continue
+    # Find an http:// or ws:// URL in the command — any flag name works.
+    local cmd_url
+    cmd_url=$(jq -r --arg k "$key" \
+      '.mcp[$k].command[]? | select(startswith("http://") or startswith("ws://"))' \
+      "$cfg" 2>/dev/null | head -1)
+    [[ -z "$cmd_url" ]] && continue
+    # Extract port from http://host:port[/path] or ws://host:port[/path]
+    local hostport="${cmd_url#*://}"   # host:port[/path]
+    hostport="${hostport%%/*}"          # host:port
+    local entry_port="${hostport##*:}" # port
+    if ! pmcp::probe_chrome "$entry_port"; then
+      dead_keys+=("$key")
+    fi
+  done <<< "$keys"
+
+  (( ${#dead_keys[@]} == 0 )) && return 0
+
+  local tmp="$cfg.tmp.$$"
+  local args=()
+  local i=0
+  for k in "${dead_keys[@]+"${dead_keys[@]}"}"; do
+    args+=(--arg "k$i" "$k")
+    i=$((i + 1))
+  done
+  jq "${args[@]+"${args[@]}"}" \
+    'reduce ([$ARGS.named | to_entries[] | select(.key|startswith("k")) | .value][]) as $k (.; del(.mcp[$k]))' \
+    "$cfg" > "$tmp"
+  mv "$tmp" "$cfg"
+  chmod 600 "$cfg"
+
+  echo "  🧹 pmcp: removed ${#dead_keys[@]} stale ${prefix}* entr$([ ${#dead_keys[@]} -eq 1 ] && echo y || echo ies): ${dead_keys[*]}"
+}
+
+# Register (or overwrite) an MCP entry.
+# Args: $1 = config file path, $2 = key, $3 = command as JSON array string
+#   e.g. pmcp::register cfg playwright_port_19222 '["playwright-mcp","--cdp-endpoint","http://192.168.65.254:19222"]'
+pmcp::register() {
+  local cfg="$1" key="$2" cmd_json="$3"
+  [[ -f "$cfg" ]] || echo '{}' > "$cfg"
+  local tmp="$cfg.tmp.$$"
+  jq --arg key "$key" --argjson cmd "$cmd_json" \
+    '.mcp = (.mcp // {}) | .mcp[$key] = {"type":"local","command":$cmd}' \
+    "$cfg" > "$tmp"
+  mv "$tmp" "$cfg"
+  chmod 600 "$cfg"
+  echo "  ➕ pmcp: registered $key"
+}
+
+# Register both playwright-mcp and chrome-devtools-mcp for a host Chrome on
+# a given CDP port. Sweeps dead entries of both prefixes first, then writes
+# the new entries. MUST be called inside a flock.
+# Args: $1 = cfg, $2 = port, $3 = playwright key, $4 = chrome-devtools key
+pmcp::register_host_chrome() {
+  local cfg="$1" port="$2" pw_key="$3" cd_key="$4"
+  local url="http://$PMCP_DOCKER_HOST_IP:$port"
+
+  pmcp::sweep_dead "$cfg" "playwright_"
+  pmcp::sweep_dead "$cfg" "chrome-devtools_"
+  pmcp::register "$cfg" "$pw_key" \
+    "[\"playwright-mcp\",\"--cdp-endpoint\",\"$url\"]"
+  pmcp::register "$cfg" "$cd_key" \
+    "[\"chrome-devtools-mcp\",\"--browserUrl\",\"$url\"]"
+}
+
 # Sweep dead playwright_* entries and append a new one. MUST be called inside
 # a flock by the caller. Does not acquire the lock itself, by design — locking
 # happens around a larger critical section in the caller.
