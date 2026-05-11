@@ -823,8 +823,17 @@ if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBO
     # Deterministic port per container name
     CONTAINER_HASH=$(echo "$CONTAINER_NAME_VALUE" | md5sum | cut -c1-4)
     HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
-    PLAYWRIGHT_MCP_NAME="playwright_port_${HOST_CHROME_CDP_PORT}"
-    CHROME_DEVTOOLS_MCP_NAME="chrome-devtools_port_${HOST_CHROME_CDP_PORT}"
+
+    # Only register entries for MCP binaries actually present in the image
+    # (tracked in $AI_SANDBOX_CONFIG by setup.sh). Otherwise opencode would
+    # try to spawn a missing binary and fail. (is_mcp_installed is defined
+    # later in the file, so use jq inline here.)
+    if jq -e '.mcp.installed // [] | index("playwright") != null' "$AI_SANDBOX_CONFIG" &>/dev/null; then
+      PLAYWRIGHT_MCP_NAME="playwright_port_${HOST_CHROME_CDP_PORT}"
+    fi
+    if jq -e '.mcp.installed // [] | index("chrome-devtools") != null' "$AI_SANDBOX_CONFIG" &>/dev/null; then
+      CHROME_DEVTOOLS_MCP_NAME="chrome-devtools_port_${HOST_CHROME_CDP_PORT}"
+    fi
 
     # Reuse-if-alive: probe before launching
     if pmcp::probe_chrome "$HOST_CHROME_CDP_PORT"; then
