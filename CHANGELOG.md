@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [3.3.0-beta.1] - 2026-05-11
+## [3.3.0-beta.2] - 2026-05-11
 
 ### Fixed
 - **`bin/ai-run` symlink resolution** — Resolving `SCRIPT_DIR` from `$BASH_SOURCE[0]` returned the invocation path (typically `~/bin/ai-run`), not the symlink target where the package actually lives. As a result, `lib/playwright-mcp-config.sh` could not be sourced from npm-installed copies, the helper functions were undefined, and the entire host-Chrome / per-container MCP block was silently skipped — leaving containers with no `PLAYWRIGHT_MCP_NAME` env var and no `playwright_port_*` registration. Now walks the symlink chain with a portable loop (macOS-compatible, no `readlink -f`).
