@@ -791,7 +791,19 @@ fi
 HOST_CHROME_CDP=false
 HOST_CHROME_CDP_PORT=19222
 PLAYWRIGHT_MCP_NAME=""
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Portable symlink-resolving SCRIPT_DIR (macOS readlink has no -f).
+# Needed because ai-run is typically invoked via the ~/bin/ai-run symlink.
+_pmcp_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")/.." && pwd
+}
+SCRIPT_DIR="$(_pmcp_resolve_script_dir)"
+unset -f _pmcp_resolve_script_dir
 # shellcheck source=lib/playwright-mcp-config.sh
 [[ -f "$SCRIPT_DIR/lib/playwright-mcp-config.sh" ]] && source "$SCRIPT_DIR/lib/playwright-mcp-config.sh"
 
