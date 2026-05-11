@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.3.0] - 2026-05-11
+
+Stable release of the multi-container Playwright MCP work. Combines
+3.3.0-beta.0 (per-container entries + locked sweep+append) with
+3.3.0-beta.2 (symlink-resolution fix).
+
+### Known follow-ups (tracked in `docs/TODO-playwright-mcp.md`)
+- Each container currently sees *all* `playwright_port_*` entries in
+  the shared config, inflating agent context with unused tool
+  definitions. Per-container effective config + cleanup-on-exit
+  planned.
+
+---
+
 ## [3.3.0-beta.2] - 2026-05-11
 
 ### Fixed
