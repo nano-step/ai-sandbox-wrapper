@@ -435,6 +435,54 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
     jq --argjson mcp "$MCP_INSTALLED" '.mcp.installed = $mcp' "$SANDBOX_CONFIG" > "$SANDBOX_CONFIG.tmp" && mv "$SANDBOX_CONFIG.tmp" "$SANDBOX_CONFIG"
     chmod 600 "$SANDBOX_CONFIG"
     echo "✅ MCP tool selections saved to config"
+
+    # Auto-detect host browser for ai-run's "Host Chrome CDP mode". That mode
+    # is gated on .mcp.chromePath being set in config.json, but setup never
+    # wrote it -- users had to manually edit the file. Detect a sensible
+    # default the first time an MCP browser tool is selected; preserve any
+    # existing value the user set themselves.
+    if [[ "$INSTALL_CHROME_DEVTOOLS_MCP" -eq 1 || "$INSTALL_PLAYWRIGHT_MCP" -eq 1 ]]; then
+      EXISTING_CHROME_PATH=$(jq -r '.mcp.chromePath // empty' "$SANDBOX_CONFIG" 2>/dev/null)
+      if [[ -z "$EXISTING_CHROME_PATH" ]]; then
+        DETECTED_CHROME_PATH=""
+        case "$(uname -s)" in
+          Darwin)
+            # Stable Chrome first, then Chromium, then popular forks.
+            for candidate in \
+              "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+              "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+              "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+              "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+              "/Applications/Arc.app/Contents/MacOS/Arc"; do
+              if [[ -f "$candidate" ]]; then
+                DETECTED_CHROME_PATH="$candidate"
+                break
+              fi
+            done
+            ;;
+          Linux)
+            for cmd in google-chrome-stable google-chrome chromium chromium-browser brave-browser microsoft-edge; do
+              if command -v "$cmd" &>/dev/null; then
+                DETECTED_CHROME_PATH=$(command -v "$cmd")
+                break
+              fi
+            done
+            ;;
+        esac
+
+        if [[ -n "$DETECTED_CHROME_PATH" ]]; then
+          jq --arg path "$DETECTED_CHROME_PATH" '.mcp.chromePath = $path' "$SANDBOX_CONFIG" > "$SANDBOX_CONFIG.tmp" \
+            && mv "$SANDBOX_CONFIG.tmp" "$SANDBOX_CONFIG"
+          chmod 600 "$SANDBOX_CONFIG"
+          echo "🌐 Host browser detected for CDP: $DETECTED_CHROME_PATH"
+          echo "   (ai-run will launch this with --remote-debugging-port for MCP browser tools.)"
+          echo "   To change or disable, edit .mcp.chromePath in $SANDBOX_CONFIG"
+        else
+          echo "ℹ️  No host browser auto-detected for CDP mode."
+          echo "   To enable, set .mcp.chromePath in $SANDBOX_CONFIG to a Chrome/Chromium binary."
+        fi
+      fi
+    fi
   fi
 fi
 
