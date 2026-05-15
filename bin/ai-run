@@ -2611,7 +2611,15 @@ fi
 
 # Nano-brain targeted preflight + auto-repair wrapper
 if [[ "$SHELL_MODE" == "true" ]] && [[ "$NANO_BRAIN_AUTO_REPAIR" == "true" ]] && [[ "${DOCKER_COMMAND[0]:-}" == "-c" ]]; then
-  DOCKER_COMMAND[1]="$NANO_BRAIN_SHELL_HOOK ${DOCKER_COMMAND[1]}"
+  # Separate hook from following command with newline so bash parses them
+  # as distinct statements. Without this, the hook's trailing `export -f`
+  # line gets joined with the next `echo` call, producing:
+  #   export -f nano_brain_shell_wrapper npx echo ''; echo '...'
+  # which makes bash try to `export -f echo` (a builtin, not a function)
+  # and `export -f ''` (empty name), emitting two harmless but ugly errors:
+  #   bash: line 68: export: echo: not a function
+  #   bash: line 68: export: : not a function
+  DOCKER_COMMAND[1]="$NANO_BRAIN_SHELL_HOOK"$'\n'"${DOCKER_COMMAND[1]}"
 fi
 
 if [[ "$SHELL_MODE" != "true" ]] && is_nano_brain_command; then
