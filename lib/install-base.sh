@@ -67,6 +67,31 @@ COPY skills/rtk-setup/SKILL.md /home/agent/.config/opencode/skills/rtk-setup/SKI
   fi
 fi
 
+if [[ "${INSTALL_PUP:-0}" -eq 1 ]]; then
+  echo "📦 Pup (Datadog CLI) will be installed in base image (multi-stage build)"
+  DOCKERFILE_BUILD_STAGES+='# Build Pup from source (multi-stage: only binary is kept, Rust toolchain discarded)
+FROM rust:bookworm AS pup-builder
+RUN cargo install --git https://github.com/DataDog/pup --locked
+'
+  ADDITIONAL_TOOLS_INSTALL+='# Install Pup - Datadog CLI for AI agents (built from source)
+COPY --from=pup-builder /usr/local/cargo/bin/pup /usr/local/bin/pup
+'
+  # Copy Pup OpenCode skill into build context so it can be COPY'd into the image
+  SCRIPT_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PUP_SKILLS_SRC="${SCRIPT_BASE_DIR}/../skills"
+  if [[ -d "$PUP_SKILLS_SRC/dd-pup" ]]; then
+    mkdir -p "dockerfiles/base/skills/dd-pup"
+    cp "$PUP_SKILLS_SRC/dd-pup/SKILL.md" "dockerfiles/base/skills/dd-pup/SKILL.md"
+    ADDITIONAL_TOOLS_INSTALL+='# Install Pup OpenCode skill (auto-discovered by OpenCode agents)
+RUN mkdir -p /home/agent/.config/opencode/skills/dd-pup
+COPY skills/dd-pup/SKILL.md /home/agent/.config/opencode/skills/dd-pup/SKILL.md
+'
+    echo "  ✅ Pup OpenCode skill will be copied into container"
+  else
+    echo "  ⚠️  Pup skill not found at $PUP_SKILLS_SRC/dd-pup — skipping skill installation"
+  fi
+fi
+
 if [[ "${INSTALL_PLAYWRIGHT:-0}" -eq 1 ]]; then
   echo "📦 Playwright will be installed in base image"
   ADDITIONAL_TOOLS_INSTALL+='# Install Playwright system dependencies

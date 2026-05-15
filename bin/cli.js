@@ -140,6 +140,7 @@ function runRebuild() {
     INSTALL_CHROME_DEVTOOLS_MCP: hasMcp('chrome-devtools') ? '1' : '0',
     INSTALL_PLAYWRIGHT_HOST: useHostChrome ? '1' : '0',
     INSTALL_RTK: '0',
+    INSTALL_PUP: '0',
     INSTALL_SPEC_KIT: '0',
     INSTALL_UX_UI_PROMAX: '0',
     INSTALL_OPENSPEC: '0',

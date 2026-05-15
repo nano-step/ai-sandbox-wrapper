@@ -811,6 +811,20 @@ unset -f _pmcp_resolve_script_dir
 if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]] && declare -f pmcp::sanitize_name >/dev/null; then
   PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
   if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+    # Ask user whether to open host Chrome browser
+    if [[ -t 0 ]]; then
+      echo ""
+      echo "🌐 Host Chrome browser is configured: $PLAYWRIGHT_HOST_CHROME"
+      printf "   Open browser for AI agent? [y/N] "
+      read -r -t 10 OPEN_CHROME_ANSWER || OPEN_CHROME_ANSWER=""
+      echo ""
+      if [[ ! "$OPEN_CHROME_ANSWER" =~ ^[Yy]$ ]]; then
+        echo "   ⏭️  Skipping host Chrome (using container Chromium if available)"
+        PLAYWRIGHT_HOST_CHROME=""
+      fi
+    fi
+  fi
+  if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
     HOST_CHROME_CDP=true
     echo "🌐 Host Chrome CDP mode: $PLAYWRIGHT_HOST_CHROME"
 

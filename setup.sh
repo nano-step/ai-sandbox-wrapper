@@ -311,8 +311,8 @@ done
 echo ""
 if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
   # Category 1: AI Enhancement Tools (spec-driven development, UI/UX, browser automation)
-  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk"
-  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB)"
+  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk,pup"
+  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB),Datadog Pup CLI - AI-agent-ready observability CLI (~10MB)"
 
   multi_select "Select AI Enhancement Tools (installed in containers)" "$AI_TOOL_OPTIONS" "$AI_TOOL_DESCS"
   AI_ENHANCEMENT_TOOLS=("${SELECTED_ITEMS[@]}")
@@ -390,6 +390,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_CHROME_DEVTOOLS_MCP="${INSTALL_CHROME_DEVTOOLS_MCP:-0}"
   INSTALL_PLAYWRIGHT_MCP="${INSTALL_PLAYWRIGHT_MCP:-0}"
   INSTALL_RTK="${INSTALL_RTK:-0}"
+  INSTALL_PUP="${INSTALL_PUP:-0}"
 
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
     case "$addon" in
@@ -417,10 +418,13 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       rtk)
         INSTALL_RTK=1
         ;;
+      pup)
+        INSTALL_PUP=1
+        ;;
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK INSTALL_PUP
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
@@ -448,6 +452,7 @@ TOOLS="$TOOLS_CSV" \
   INSTALL_CHROME_DEVTOOLS_MCP="$INSTALL_CHROME_DEVTOOLS_MCP" \
   INSTALL_PLAYWRIGHT_MCP="$INSTALL_PLAYWRIGHT_MCP" \
   INSTALL_RTK="$INSTALL_RTK" \
+  INSTALL_PUP="$INSTALL_PUP" \
   bash "$SCRIPT_DIR/lib/build-sandbox.sh"
 
 OLD_IMAGES=()
