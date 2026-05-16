@@ -92,6 +92,26 @@ COPY skills/dd-pup/SKILL.md /home/agent/.config/opencode/skills/dd-pup/SKILL.md
   fi
 fi
 
+if [[ "${INSTALL_OD_HELPERS:-1}" -eq 1 ]]; then
+  echo "📦 open-design helper scripts (od-status, od-health) will be installed in base image"
+  # Copy helper scripts into build context so they can be COPY'd into the image
+  SCRIPT_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  OD_HELPERS_SRC="${SCRIPT_BASE_DIR}/../scripts"
+  if [[ -f "$OD_HELPERS_SRC/od-status" && -f "$OD_HELPERS_SRC/od-health" ]]; then
+    mkdir -p "dockerfiles/base/scripts"
+    cp "$OD_HELPERS_SRC/od-status" "dockerfiles/base/scripts/od-status"
+    cp "$OD_HELPERS_SRC/od-health" "dockerfiles/base/scripts/od-health"
+    ADDITIONAL_TOOLS_INSTALL+='# Install open-design helper scripts (od-status, od-health) for agent containers
+COPY scripts/od-status /usr/local/bin/od-status
+COPY scripts/od-health /usr/local/bin/od-health
+RUN chmod +x /usr/local/bin/od-status /usr/local/bin/od-health
+'
+    echo "  ✅ open-design helpers will be copied into container"
+  else
+    echo "  ⚠️  open-design helpers not found at $OD_HELPERS_SRC — skipping"
+  fi
+fi
+
 if [[ "${INSTALL_PLAYWRIGHT:-0}" -eq 1 ]]; then
   echo "📦 Playwright will be installed in base image"
   ADDITIONAL_TOOLS_INSTALL+='# Install Playwright system dependencies

@@ -281,8 +281,8 @@ echo "📁 Legacy workspaces file: $WORKSPACES_FILE"
 WORKSPACE="${WORKSPACES[0]}"
 
 # Tool definitions
-TOOL_OPTIONS="amp,opencode,openclaw,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
-TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
+TOOL_OPTIONS="amp,opencode,openclaw,open-design,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
+TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Open Design daemon (HTTP service — agent-driven design generation),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
 
 # Pre-select previously installed tools
 PRESELECTED_TOOLS=""
@@ -303,7 +303,7 @@ echo "Installing tools: ${TOOLS[*]}"
 
 CONTAINERIZED_TOOLS=()
 for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" =~ ^(amp|opencode|openclaw|claude|aider|droid|gemini|kilo|qwen|codex|qoder|auggie|codebuddy|jules|shai)$ ]]; then
+  if [[ "$tool" =~ ^(amp|opencode|openclaw|open-design|claude|aider|droid|gemini|kilo|qwen|codex|qoder|auggie|codebuddy|jules|shai)$ ]]; then
     CONTAINERIZED_TOOLS+=("$tool")
   fi
 done

@@ -3,7 +3,7 @@ variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: ""
   # Default: all tools. Override in CI/CD settings or pipeline trigger.
-  TOOLS: "amp,opencode,claude,droid,gemini,kilo,qwen,codex,aider,qoder,auggie,codebuddy,jules,shai"
+  TOOLS: "amp,opencode,claude,open-design,droid,gemini,kilo,qwen,codex,aider,qoder,auggie,codebuddy,jules,shai"
 
 stages:
   - build
