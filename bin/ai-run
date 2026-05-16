@@ -212,14 +212,25 @@ HLP
           sed -i '/^OD_API_TOKEN=/d' "$OD_ENV_FILE"
         fi
       fi
+      if ! command -v openssl >/dev/null 2>&1; then
+        echo "❌ ERROR: 'openssl' is required to generate a token" >&2
+        exit 1
+      fi
       local token
       token="$(openssl rand -hex 32)"
+      # Ensure trailing newline before append to avoid joining with previous line
+      if [[ -s "$OD_ENV_FILE" && -n "$(tail -c 1 "$OD_ENV_FILE" 2>/dev/null)" ]]; then
+        echo "" >> "$OD_ENV_FILE"
+      fi
       echo "OD_API_TOKEN=$token" >> "$OD_ENV_FILE"
       echo "✅ Generated OD_API_TOKEN (256-bit, written to $OD_ENV_FILE)"
     fi
 
     # Ensure OD_DAEMON_URL line
     if ! grep -q "^OD_DAEMON_URL=" "$OD_ENV_FILE"; then
+      if [[ -s "$OD_ENV_FILE" && -n "$(tail -c 1 "$OD_ENV_FILE" 2>/dev/null)" ]]; then
+        echo "" >> "$OD_ENV_FILE"
+      fi
       echo "OD_DAEMON_URL=$OD_DEFAULT_URL" >> "$OD_ENV_FILE"
       echo "✅ Set OD_DAEMON_URL=$OD_DEFAULT_URL in $OD_ENV_FILE"
     fi
@@ -252,11 +263,14 @@ HLP
         --expose) expose=true; shift ;;
         --port)
           shift
-          if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then
+          if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+            if (( $1 < 1 || $1 > 65535 )); then
+              echo "❌ ERROR: --port value '$1' out of range (1-65535)" >&2; exit 1
+            fi
             host_port="$1"
             shift
           else
-            echo "❌ ERROR: --port requires a value" >&2; exit 1
+            echo "❌ ERROR: --port requires a numeric value (e.g. 7456)" >&2; exit 1
           fi
           ;;
         *) echo "❌ ERROR: unknown start flag: $1" >&2; exit 1 ;;
@@ -360,7 +374,21 @@ HLP
 
     # Try health check (only meaningful if container is running)
     if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
-      if docker exec "$OD_CONTAINER_NAME" curl -sf --max-time 3 http://127.0.0.1:7456/api/health >/dev/null 2>&1; then
+      # Try in-container curl first (fast path); fall back to one-off container on same network
+      # because upstream daemon image may not bundle curl
+      local health_ok=false
+      if docker exec "$OD_CONTAINER_NAME" sh -c 'command -v curl' >/dev/null 2>&1; then
+        if docker exec "$OD_CONTAINER_NAME" curl -sf --max-time 3 http://127.0.0.1:7456/api/health >/dev/null 2>&1; then
+          health_ok=true
+        fi
+      else
+        # Fallback: probe via a tiny one-off container in the same network
+        if docker run --rm --network "$OD_NETWORK" curlimages/curl:latest \
+            -sf --max-time 3 "http://${OD_CONTAINER_NAME}:7456/api/health" >/dev/null 2>&1; then
+          health_ok=true
+        fi
+      fi
+      if [[ "$health_ok" == "true" ]]; then
         echo "Health    : OK"
       else
         echo "Health    : FAIL (daemon not responding on /api/health)"
@@ -3033,10 +3061,12 @@ DOCKER_ARGS+=($TOOL_CONFIG_MOUNTS)
 DOCKER_ARGS+=($RG_COMPAT_MOUNT)
 DOCKER_ARGS+=($GIT_MOUNTS)
 DOCKER_ARGS+=($SSH_AGENT_ENV)
-# Default to ai-sandbox network for service discovery if user didn't specify
+# Default to ai-sandbox network for service discovery if user didn't specify.
+# Only add --network if creation succeeded; otherwise Docker uses its default bridge.
 if [[ -z "$NETWORK_OPTIONS" ]]; then
-  ensure_network "ai-sandbox" >/dev/null 2>&1 || true
-  DOCKER_ARGS+=(--network ai-sandbox)
+  if ensure_network "ai-sandbox" >/dev/null 2>&1; then
+    DOCKER_ARGS+=(--network ai-sandbox)
+  fi
 fi
 DOCKER_ARGS+=($NETWORK_OPTIONS)
 DOCKER_ARGS+=($DISPLAY_FLAGS)

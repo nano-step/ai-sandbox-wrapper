@@ -15,8 +15,12 @@ if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
 fi
 
 TOOL="open-design"
-OPEN_DESIGN_IMAGE="${OPEN_DESIGN_IMAGE:-docker.io/vanjayak/open-design:latest}"
-OPEN_DESIGN_VERSION="${OPEN_DESIGN_VERSION:-latest}"
+# NOTE: upstream vanjayak/open-design currently publishes only the 'latest' tag (as of 2026-05).
+# When upstream starts publishing version tags (e.g., 0.8.0-preview), pin via OPEN_DESIGN_IMAGE_TAG
+# or OPEN_DESIGN_IMAGE to avoid breaking changes.
+OPEN_DESIGN_IMAGE_TAG="${OPEN_DESIGN_IMAGE_TAG:-latest}"
+OPEN_DESIGN_IMAGE="${OPEN_DESIGN_IMAGE:-docker.io/vanjayak/open-design:${OPEN_DESIGN_IMAGE_TAG}}"
+OPEN_DESIGN_VERSION="${OPEN_DESIGN_VERSION:-${OPEN_DESIGN_IMAGE_TAG}}"
 
 echo "Installing $TOOL (Open Design daemon — long-running HTTP service)..."
 echo "  Upstream image: $OPEN_DESIGN_IMAGE"
