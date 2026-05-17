@@ -3122,8 +3122,9 @@ if docker image inspect ai-open-design:latest >/dev/null 2>&1; then
         fi
         docker run -d --name ai-open-design --network "$OD_NETWORK" \
           --restart unless-stopped -v "$OD_VOLUME:/app/.od" \
+          -p "127.0.0.1:7456:7456" \
           --env-file "$OD_ENV_FILE" ai-open-design:latest >/dev/null
-        echo "✅ Open Design daemon started (http://ai-open-design:7456)"
+        echo "✅ Open Design daemon started (http://localhost:7456)"
       fi
     fi
   fi
