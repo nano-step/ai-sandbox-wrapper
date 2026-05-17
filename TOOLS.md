@@ -69,7 +69,6 @@ EOF
 ```
 
 **API Key:** `ANTHROPIC_API_KEY` in `~/.ai-sandbox/env`
-
 ### Gemini
 
 **Native Config:** `~/.config/gemini/`

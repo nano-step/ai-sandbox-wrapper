@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -e
+
+if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+  cat << 'HELP'
+od-health: Check open-design daemon connectivity
+
+Usage: od-health [OPTIONS]
+
+Environment variables:
+  OD_DAEMON_URL    Daemon URL (default: http://ai-open-design:7456)
+  OD_API_TOKEN     Bearer token for authentication (optional)
+
+Options:
+  -h, --help       Show this message
+HELP
+  exit 0
+fi
+
+URL="${OD_DAEMON_URL:-http://ai-open-design:7456}"
+TOKEN="${OD_API_TOKEN:-}"
+CURL_OPTS=(-sf --max-time 5)
+
+[[ -n "$TOKEN" ]] && CURL_OPTS+=(-H "Authorization: Bearer ${TOKEN}")
+
+curl "${CURL_OPTS[@]}" "${URL}/api/health" 2>&1 || {
+  rc=$?
+  echo "❌ od-health: daemon unreachable at ${URL} (curl exit ${rc})" >&2
+  exit $rc
+}

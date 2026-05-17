@@ -14,9 +14,16 @@ multi_select() {
   local title="$1"
   IFS=',' read -ra options <<< "$2"
   IFS=',' read -ra descriptions <<< "$3"
+  local preselected="${4:-}"
   local cursor=0
   local selected=()
-  for ((i=0; i<${#options[@]}; i++)); do selected[i]=0; done
+  for ((i=0; i<${#options[@]}; i++)); do
+    if [[ -n "$preselected" ]] && echo ",$preselected," | grep -q ",${options[$i]},"; then
+      selected[i]=1
+    else
+      selected[i]=0
+    fi
+  done
 
   # Use tput for better terminal control
   tput civis # Hide cursor
@@ -56,13 +63,13 @@ multi_select() {
       read -rsn1 -t 1 next1
       read -rsn1 -t 1 next2
       case "$next1$next2" in
-        '[A') ((cursor--)) ;; # Up
-        '[B') ((cursor++)) ;; # Down
+        '[A') ((cursor--)) || true ;; # Up
+        '[B') ((cursor++)) || true ;; # Down
       esac
     else
       case "$key" in
-        k) ((cursor--)) ;; # k for Up
-        j) ((cursor++)) ;; # j for Down
+        k) ((cursor--)) || true ;; # k for Up
+        j) ((cursor++)) || true ;; # j for Down
         " ") # Space (toggle)
           if [ "${selected[$cursor]}" -eq 1 ]; then
             selected[$cursor]=0
@@ -130,13 +137,13 @@ single_select() {
       read -rsn1 -t 1 next1
       read -rsn1 -t 1 next2
       case "$next1$next2" in
-        '[A') ((cursor--)) ;;
-        '[B') ((cursor++)) ;;
+        '[A') ((cursor--)) || true ;;
+        '[B') ((cursor++)) || true ;;
       esac
     else
       case "$key" in
-        k) ((cursor--)) ;;
-        j) ((cursor++)) ;;
+        k) ((cursor--)) || true ;;
+        j) ((cursor++)) || true ;;
         "") break ;;
         $'\n'|$'\r') break ;;
       esac
@@ -274,11 +281,17 @@ echo "📁 Legacy workspaces file: $WORKSPACES_FILE"
 WORKSPACE="${WORKSPACES[0]}"
 
 # Tool definitions
-TOOL_OPTIONS="amp,opencode,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
-TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
+TOOL_OPTIONS="amp,opencode,openclaw,open-design,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
+TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Open Design daemon (HTTP service — agent-driven design generation),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
+
+# Pre-select previously installed tools
+PRESELECTED_TOOLS=""
+if command -v jq &>/dev/null && [[ -f "$SANDBOX_DIR/config.json" ]]; then
+  PRESELECTED_TOOLS=$(jq -r '.tools.installed // [] | join(",")' "$SANDBOX_DIR/config.json" 2>/dev/null || echo "")
+fi
 
 # Interactive multi-select
-multi_select "Select AI Tools to Install" "$TOOL_OPTIONS" "$TOOL_DESCS"
+multi_select "Select AI Tools to Install" "$TOOL_OPTIONS" "$TOOL_DESCS" "$PRESELECTED_TOOLS"
 TOOLS=("${SELECTED_ITEMS[@]}")
 
 if [[ ${#TOOLS[@]} -eq 0 ]]; then
@@ -290,7 +303,7 @@ echo "Installing tools: ${TOOLS[*]}"
 
 CONTAINERIZED_TOOLS=()
 for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" =~ ^(amp|opencode|claude|aider|droid|gemini|kilo|qwen|codex|qoder|auggie|codebuddy|jules|shai)$ ]]; then
+  if [[ "$tool" =~ ^(amp|opencode|openclaw|open-design|claude|aider|droid|gemini|kilo|qwen|codex|qoder|auggie|codebuddy|jules|shai)$ ]]; then
     CONTAINERIZED_TOOLS+=("$tool")
   fi
 done
@@ -298,8 +311,8 @@ done
 echo ""
 if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
   # Category 1: AI Enhancement Tools (spec-driven development, UI/UX, browser automation)
-  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright"
-  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB)"
+  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk,pup"
+  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB),Datadog Pup CLI - AI-agent-ready observability CLI (~10MB)"
 
   multi_select "Select AI Enhancement Tools (installed in containers)" "$AI_TOOL_OPTIONS" "$AI_TOOL_DESCS"
   AI_ENHANCEMENT_TOOLS=("${SELECTED_ITEMS[@]}")
@@ -369,13 +382,15 @@ if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 || ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
 fi
 
 if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
-  INSTALL_SPEC_KIT=0
-  INSTALL_UX_UI_PROMAX=0
-  INSTALL_OPENSPEC=0
-  INSTALL_PLAYWRIGHT=0
-  INSTALL_RUBY=0
-  INSTALL_CHROME_DEVTOOLS_MCP=0
-  INSTALL_PLAYWRIGHT_MCP=0
+  INSTALL_SPEC_KIT="${INSTALL_SPEC_KIT:-0}"
+  INSTALL_UX_UI_PROMAX="${INSTALL_UX_UI_PROMAX:-0}"
+  INSTALL_OPENSPEC="${INSTALL_OPENSPEC:-0}"
+  INSTALL_PLAYWRIGHT="${INSTALL_PLAYWRIGHT:-0}"
+  INSTALL_RUBY="${INSTALL_RUBY:-0}"
+  INSTALL_CHROME_DEVTOOLS_MCP="${INSTALL_CHROME_DEVTOOLS_MCP:-0}"
+  INSTALL_PLAYWRIGHT_MCP="${INSTALL_PLAYWRIGHT_MCP:-0}"
+  INSTALL_RTK="${INSTALL_RTK:-0}"
+  INSTALL_PUP="${INSTALL_PUP:-0}"
 
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
     case "$addon" in
@@ -400,11 +415,16 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       playwright-mcp)
         INSTALL_PLAYWRIGHT_MCP=1
         ;;
+      rtk)
+        INSTALL_RTK=1
+        ;;
+      pup)
+        INSTALL_PUP=1
+        ;;
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP
-  bash "$SCRIPT_DIR/lib/install-base.sh"
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK INSTALL_PUP
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
@@ -419,56 +439,91 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
     jq --argjson mcp "$MCP_INSTALLED" '.mcp.installed = $mcp' "$SANDBOX_CONFIG" > "$SANDBOX_CONFIG.tmp" && mv "$SANDBOX_CONFIG.tmp" "$SANDBOX_CONFIG"
     chmod 600 "$SANDBOX_CONFIG"
     echo "✅ MCP tool selections saved to config"
+
+    # Auto-detect host browser for ai-run's "Host Chrome CDP mode". That mode
+    # is gated on .mcp.chromePath being set in config.json, but setup never
+    # wrote it -- users had to manually edit the file. Detect a sensible
+    # default the first time an MCP browser tool is selected; preserve any
+    # existing value the user set themselves.
+    if [[ "$INSTALL_CHROME_DEVTOOLS_MCP" -eq 1 || "$INSTALL_PLAYWRIGHT_MCP" -eq 1 ]]; then
+      EXISTING_CHROME_PATH=$(jq -r '.mcp.chromePath // empty' "$SANDBOX_CONFIG" 2>/dev/null)
+      if [[ -z "$EXISTING_CHROME_PATH" ]]; then
+        DETECTED_CHROME_PATH=""
+        case "$(uname -s)" in
+          Darwin)
+            # Stable Chrome first, then Chromium, then popular forks.
+            for candidate in \
+              "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+              "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+              "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+              "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+              "/Applications/Arc.app/Contents/MacOS/Arc"; do
+              if [[ -f "$candidate" ]]; then
+                DETECTED_CHROME_PATH="$candidate"
+                break
+              fi
+            done
+            ;;
+          Linux)
+            for cmd in google-chrome-stable google-chrome chromium chromium-browser brave-browser microsoft-edge; do
+              if command -v "$cmd" &>/dev/null; then
+                DETECTED_CHROME_PATH=$(command -v "$cmd")
+                break
+              fi
+            done
+            ;;
+        esac
+
+        if [[ -n "$DETECTED_CHROME_PATH" ]]; then
+          jq --arg path "$DETECTED_CHROME_PATH" '.mcp.chromePath = $path' "$SANDBOX_CONFIG" > "$SANDBOX_CONFIG.tmp" \
+            && mv "$SANDBOX_CONFIG.tmp" "$SANDBOX_CONFIG"
+          chmod 600 "$SANDBOX_CONFIG"
+          echo "🌐 Host browser detected for CDP: $DETECTED_CHROME_PATH"
+          echo "   (ai-run will launch this with --remote-debugging-port for MCP browser tools.)"
+          echo "   To change or disable, edit .mcp.chromePath in $SANDBOX_CONFIG"
+        else
+          echo "ℹ️  No host browser auto-detected for CDP mode."
+          echo "   To enable, set .mcp.chromePath in $SANDBOX_CONFIG to a Chrome/Chromium binary."
+        fi
+      fi
+    fi
   fi
 fi
 
-# Install selected tools
+TOOLS_CSV=$(IFS=','; echo "${TOOLS[*]}")
+TOOLS="$TOOLS_CSV" \
+  INSTALL_SPEC_KIT="$INSTALL_SPEC_KIT" \
+  INSTALL_UX_UI_PROMAX="$INSTALL_UX_UI_PROMAX" \
+  INSTALL_OPENSPEC="$INSTALL_OPENSPEC" \
+  INSTALL_PLAYWRIGHT="$INSTALL_PLAYWRIGHT" \
+  INSTALL_RUBY="$INSTALL_RUBY" \
+  INSTALL_CHROME_DEVTOOLS_MCP="$INSTALL_CHROME_DEVTOOLS_MCP" \
+  INSTALL_PLAYWRIGHT_MCP="$INSTALL_PLAYWRIGHT_MCP" \
+  INSTALL_RTK="$INSTALL_RTK" \
+  INSTALL_PUP="$INSTALL_PUP" \
+  bash "$SCRIPT_DIR/lib/build-sandbox.sh"
+
+OLD_IMAGES=()
 for tool in "${TOOLS[@]}"; do
-  case $tool in
-    amp)
-      bash "$SCRIPT_DIR/lib/install-amp.sh"
-      ;;
-    opencode)
-      bash "$SCRIPT_DIR/lib/install-opencode.sh"
-      ;;
-    droid)
-      bash "$SCRIPT_DIR/lib/install-droid.sh"
-      ;;
-    claude)
-      bash "$SCRIPT_DIR/lib/install-claude.sh"
-      ;;
-     gemini)
-       bash "$SCRIPT_DIR/lib/install-gemini.sh"
-       ;;
-     aider)
-       bash "$SCRIPT_DIR/lib/install-aider.sh"
-       ;;
-     kilo)
-      bash "$SCRIPT_DIR/lib/install-kilo.sh"
-      ;;
-    qwen)
-      bash "$SCRIPT_DIR/lib/install-qwen.sh"
-      ;;
-    codex)
-      bash "$SCRIPT_DIR/lib/install-codex.sh"
-      ;;
-    qoder)
-      bash "$SCRIPT_DIR/lib/install-qoder.sh"
-      ;;
-    auggie)
-      bash "$SCRIPT_DIR/lib/install-auggie.sh"
-      ;;
-    codebuddy)
-      bash "$SCRIPT_DIR/lib/install-codebuddy.sh"
-      ;;
-    jules)
-      bash "$SCRIPT_DIR/lib/install-jules.sh"
-      ;;
-    shai)
-      bash "$SCRIPT_DIR/lib/install-shai.sh"
-      ;;
-  esac
+  if docker image inspect "ai-${tool}:latest" &>/dev/null; then
+    OLD_IMAGES+=("ai-${tool}:latest")
+  fi
 done
+
+if [[ ${#OLD_IMAGES[@]} -gt 0 ]]; then
+  echo ""
+  echo "🧹 Found old per-tool images that are no longer needed:"
+  for img in "${OLD_IMAGES[@]}"; do
+    echo "  - $img"
+  done
+  if [[ -t 0 ]]; then
+    read -p "Remove old images to free disk space? [y/N]: " CLEANUP_CHOICE
+    if [[ "$CLEANUP_CHOICE" =~ ^[Yy]$ ]]; then
+      docker rmi "${OLD_IMAGES[@]}" 2>/dev/null || true
+      echo "✅ Old images removed"
+    fi
+  fi
+fi
 
 # Additional tools are installed in base image (no host installation)
 
@@ -490,6 +545,10 @@ for tool in "${TOOLS[@]}"; do
   fi
 done
 
+if ! grep -q 'alias ai=' "$SHELL_RC" 2>/dev/null; then
+  echo 'alias ai="ai-run"' >> "$SHELL_RC"
+fi
+
 # Additional tools don't need host aliases (only in containers)
 
 # Verify permissions
@@ -500,10 +559,14 @@ fi
 
 echo "✅ Setup complete!"
 echo ""
-echo "🛠️  Installed AI tools:"
+echo "🛠️  AI Sandbox built with tools:"
 for tool in "${TOOLS[@]}"; do
   echo "  ai-run $tool (or: $tool)"
 done
+echo ""
+echo "  ai-run (or: ai)  → Interactive shell with all tools"
+echo ""
+echo "📦 Image: ai-sandbox:latest"
 
 if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
   echo ""
@@ -524,6 +587,9 @@ if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
         ;;
       playwright-mcp)
         echo "  @playwright/mcp - Microsoft Playwright MCP server"
+        ;;
+      rtk)
+        echo "  rtk - Token optimizer for AI coding agents (60-90% savings)"
         ;;
     esac
   done

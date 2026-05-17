@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -e
 
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN curl -fsSL https://opencode.ai/install | bash && \
+    mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
+    rm -rf /root/.opencode
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="opencode"
 OPENCODE_VERSION="${OPENCODE_VERSION:-}"
 
@@ -20,8 +33,8 @@ FROM ai-base:latest
 
 USER root
 RUN curl -fsSL https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION && \\
-    mv /home/agent/.opencode/bin/opencode /usr/local/bin/opencode && \\
-    rm -rf /home/agent/.opencode
+    mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \\
+    rm -rf /root/.opencode
 
 USER agent
 ENTRYPOINT ["opencode"]
@@ -32,8 +45,8 @@ FROM ai-base:latest
 
 USER root
 RUN curl -fsSL https://opencode.ai/install | bash && \
-    mv /home/agent/.opencode/bin/opencode /usr/local/bin/opencode && \
-    rm -rf /home/agent/.opencode
+    mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
+    rm -rf /root/.opencode
 
 USER agent
 ENTRYPOINT ["opencode"]

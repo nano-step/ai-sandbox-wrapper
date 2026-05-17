@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# Qoder CLI installer: Qoder's AI coding assistant
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/qoder && \
+    cd /usr/local/lib/qoder && \
+    bun init -y && \
+    bun add @qoder-ai/qodercli && \
+    ln -s /usr/local/lib/qoder/node_modules/.bin/qodercli /usr/local/bin/qoder
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="qoder"
 
 echo "Installing $TOOL (Qoder AI CLI)..."

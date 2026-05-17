@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
 set -e
 
-# Amp installer: Sourcegraph's AI coding assistant
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/amp && \
+    cd /usr/local/lib/amp && \
+    bun init -y && \
+    bun add @sourcegraph/amp && \
+    ln -s /usr/local/lib/amp/node_modules/.bin/amp /usr/local/bin/amp
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="amp"
 
 echo "Installing $TOOL (Sourcegraph Amp)..."
@@ -15,20 +29,14 @@ mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
 FROM ai-base:latest
 
-# Switch to root only for installing bun globally (needed for the system)
 USER root
-RUN npm install -g bun
-USER agent
-
-# Install Amp into user directory
-RUN mkdir -p /home/agent/lib/amp && \
-    cd /home/agent/lib/amp && \
+RUN mkdir -p /usr/local/lib/amp && \
+    cd /usr/local/lib/amp && \
     bun init -y && \
-    bun add @sourcegraph/amp
+    bun add @sourcegraph/amp && \
+    ln -s /usr/local/lib/amp/node_modules/.bin/amp /usr/local/bin/amp
 
-# Add the node_modules .bin to PATH
-ENV PATH="/home/agent/lib/amp/node_modules/.bin:${PATH}"
-
+USER agent
 ENTRYPOINT ["amp"]
 EOF
 

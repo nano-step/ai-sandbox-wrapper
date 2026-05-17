@@ -4,9 +4,10 @@ set -e
 # Show help if requested
 show_help() {
   cat << 'EOF'
-Usage: ai-run <tool> [options] [-- tool-args...]
+Usage: ai-run [tool] [options] [-- tool-args...]
 
 Run AI tools in a secure Docker sandbox.
+When no tool is specified, opens an interactive shell with all installed tools.
 
 Options:
   -s, --shell              Start interactive shell instead of running tool directly
@@ -15,6 +16,9 @@ Options:
   -p, --password <value>   Set OpenCode server password (for web/serve mode)
       --password-env <VAR> Read OpenCode server password from environment variable
       --allow-unsecured    Allow OpenCode server to run without password (suppresses warning)
+      --git-fetch          Enable git fetch-only mode (blocks push)
+      --no-nano-brain-auto-repair
+                            Disable nano-brain preflight/auto-repair logic
   -h, --help               Show this help message
       --help-env           Show environment variables reference
 
@@ -34,11 +38,13 @@ OpenCode Server Authentication (web/serve mode only):
   Precedence: --password > --password-env > OPENCODE_SERVER_PASSWORD env > interactive prompt
 
 Examples:
+  ai-run                                  # Open interactive shell with all tools
   ai-run claude                           # Run Claude in sandbox
   ai-run opencode web -e 4096             # Run OpenCode web with port exposed
   ai-run opencode web -p secret           # Run with password
   ai-run opencode --shell                 # Start shell, run tool manually
   ai-run aider -n mynetwork               # Connect to Docker network
+  ai-run opencode --git-fetch             # Git fetch only (no push)
 
 Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
 EOF
@@ -60,6 +66,10 @@ Runtime Environment Variables (inline with ai-run):
 
   AI_RUN_PLATFORM=linux/amd64 Force specific platform (useful for cross-arch)
                               Example: AI_RUN_PLATFORM=linux/amd64 ai-run opencode
+
+  AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1
+                              Disable nano-brain preflight and automatic repair behavior
+                              Example: AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
 
   PORT_BIND=all               Bind exposed ports to all interfaces (0.0.0.0) instead of localhost
                               ⚠️  Security risk - use only when needed
@@ -124,18 +134,326 @@ if [[ "${1:-}" == "--help-env" ]]; then
   show_help_env
 fi
 
-TOOL="$1"
-shift 2>/dev/null || { echo "❌ ERROR: No tool specified. Use 'ai-run --help' for usage."; exit 1; }
+TOOL="${1:-}"
+if [[ -n "$TOOL" && ! "$TOOL" =~ ^- ]]; then
+  shift
+else
+  TOOL=""
+fi
+
+# ────────────────────────────────────────────────────────────────
+# OPEN-DESIGN SERVICE-TYPE TOOL DISPATCHER
+# Unlike ephemeral CLI tools, open-design is a long-running daemon.
+# Routes init/start/stop/restart/status/logs subcommands and exits.
+# ────────────────────────────────────────────────────────────────
+if [[ "$TOOL" == "open-design" ]]; then
+  OD_CONTAINER_NAME="ai-open-design"
+  OD_IMAGE="ai-open-design:latest"
+  OD_NETWORK="ai-sandbox"
+  OD_VOLUME="ai-open-design-data"
+  OD_ENV_FILE="$HOME/.ai-sandbox/env"
+  OD_DEFAULT_URL="http://ai-open-design:7456"
+
+  od_print_help() {
+    cat <<HLP
+Usage: ai-run open-design <subcommand> [options]
+
+Subcommands:
+  init [--force]              One-time setup: generate API token, create network/volume
+  start [--expose] [--port N] Boot daemon (detached). --expose publishes port to host
+  stop                        Stop daemon (preserves container for restart)
+  restart [start-flags...]    Stop then start
+  status                      Show daemon state, network, port, token, health
+  logs [-f|--follow]          Show daemon logs (-f to follow)
+  --help, -h                  Show this help
+
+Examples:
+  ai-run open-design init
+  ai-run open-design start
+  ai-run open-design start --expose            # publishes 7456 to host
+  ai-run open-design start --expose --port 17456
+  ai-run open-design status
+HLP
+  }
+
+  od_env_has_token() {
+    [[ -f "$OD_ENV_FILE" ]] && grep -q "^OD_API_TOKEN=" "$OD_ENV_FILE"
+  }
+
+  od_read_token() {
+    [[ -f "$OD_ENV_FILE" ]] && grep "^OD_API_TOKEN=" "$OD_ENV_FILE" | head -1 | cut -d= -f2-
+  }
+
+  od_init() {
+    local force=false
+    if [[ "${1:-}" == "--force" ]]; then
+      force=true
+    fi
+
+    mkdir -p "$(dirname "$OD_ENV_FILE")"
+    touch "$OD_ENV_FILE"
+    chmod 600 "$OD_ENV_FILE"
+
+    if od_env_has_token && [[ "$force" != "true" ]]; then
+      echo "ℹ️  OD_API_TOKEN already set in $OD_ENV_FILE — nothing to do"
+      echo "    Use 'ai-run open-design init --force' to regenerate (will invalidate running sessions)"
+    else
+      if [[ "$force" == "true" ]] && od_env_has_token; then
+        printf "⚠️  This will replace the existing OD_API_TOKEN. Continue? [y/N] "
+        read -r confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+          echo "Aborted."
+          exit 0
+        fi
+        # Strip existing OD_API_TOKEN line
+        if [[ "$(uname)" == "Darwin" ]]; then
+          sed -i '' '/^OD_API_TOKEN=/d' "$OD_ENV_FILE"
+        else
+          sed -i '/^OD_API_TOKEN=/d' "$OD_ENV_FILE"
+        fi
+      fi
+      if ! command -v openssl >/dev/null 2>&1; then
+        echo "❌ ERROR: 'openssl' is required to generate a token" >&2
+        exit 1
+      fi
+      local token
+      token="$(openssl rand -hex 32)"
+      # Ensure trailing newline before append to avoid joining with previous line
+      if [[ -s "$OD_ENV_FILE" && -n "$(tail -c 1 "$OD_ENV_FILE" 2>/dev/null)" ]]; then
+        echo "" >> "$OD_ENV_FILE"
+      fi
+      echo "OD_API_TOKEN=$token" >> "$OD_ENV_FILE"
+      echo "✅ Generated OD_API_TOKEN (256-bit, written to $OD_ENV_FILE)"
+    fi
+
+    # Ensure OD_DAEMON_URL line
+    if ! grep -q "^OD_DAEMON_URL=" "$OD_ENV_FILE"; then
+      if [[ -s "$OD_ENV_FILE" && -n "$(tail -c 1 "$OD_ENV_FILE" 2>/dev/null)" ]]; then
+        echo "" >> "$OD_ENV_FILE"
+      fi
+      echo "OD_DAEMON_URL=$OD_DEFAULT_URL" >> "$OD_ENV_FILE"
+      echo "✅ Set OD_DAEMON_URL=$OD_DEFAULT_URL in $OD_ENV_FILE"
+    fi
+
+    chmod 600 "$OD_ENV_FILE"
+
+    # Ensure network
+    if ensure_network "$OD_NETWORK"; then
+      echo "✅ Docker network '$OD_NETWORK' ready"
+    fi
+
+    # Ensure volume
+    if ! docker volume inspect "$OD_VOLUME" >/dev/null 2>&1; then
+      docker volume create "$OD_VOLUME" >/dev/null
+      echo "✅ Docker volume '$OD_VOLUME' created"
+    else
+      echo "ℹ️  Docker volume '$OD_VOLUME' already exists"
+    fi
+
+    echo ""
+    echo "Next: ai-run open-design start"
+  }
+
+  od_start() {
+    local expose=false
+    local host_port=7456
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --expose) expose=true; shift ;;
+        --port)
+          shift
+          if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+            if (( $1 < 1 || $1 > 65535 )); then
+              echo "❌ ERROR: --port value '$1' out of range (1-65535)" >&2; exit 1
+            fi
+            host_port="$1"
+            shift
+          else
+            echo "❌ ERROR: --port requires a numeric value (e.g. 7456)" >&2; exit 1
+          fi
+          ;;
+        *) echo "❌ ERROR: unknown start flag: $1" >&2; exit 1 ;;
+      esac
+    done
+
+    if ! od_env_has_token; then
+      echo "❌ ERROR: OD_API_TOKEN not found in $OD_ENV_FILE"
+      echo "    Run: ai-run open-design init"
+      exit 1
+    fi
+
+    if ! docker image inspect "$OD_IMAGE" >/dev/null 2>&1; then
+      echo "❌ ERROR: image '$OD_IMAGE' not built"
+      echo "    Run: bash lib/install-open-design.sh"
+      exit 1
+    fi
+
+    ensure_network "$OD_NETWORK" || exit 1
+    docker volume inspect "$OD_VOLUME" >/dev/null 2>&1 || docker volume create "$OD_VOLUME" >/dev/null
+
+    # If a container with this name exists, handle it gracefully
+    if docker ps -a --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+        echo "ℹ️  '$OD_CONTAINER_NAME' is already running"
+        echo "    Use 'ai-run open-design restart' to apply new flags"
+        return 0
+      else
+        echo "🔄 Removing stopped container '$OD_CONTAINER_NAME' to recreate with current flags..."
+        docker rm "$OD_CONTAINER_NAME" >/dev/null
+      fi
+    fi
+
+    local run_args=(
+      run -d
+      --name "$OD_CONTAINER_NAME"
+      --network "$OD_NETWORK"
+      --restart unless-stopped
+      -v "$OD_VOLUME:/app/.od"
+      --env-file "$OD_ENV_FILE"
+    )
+
+    if [[ "$expose" == "true" ]]; then
+      run_args+=(-p "${host_port}:7456")
+    fi
+
+    run_args+=("$OD_IMAGE")
+
+    echo "🔄 Starting $OD_CONTAINER_NAME..."
+    docker "${run_args[@]}" >/dev/null
+    echo "✅ $OD_CONTAINER_NAME running on network '$OD_NETWORK'"
+    if [[ "$expose" == "true" ]]; then
+      echo "   Published to host: http://localhost:${host_port}"
+    else
+      echo "   Internal-only: reachable from sandbox containers as http://ai-open-design:7456"
+    fi
+  }
+
+  od_stop() {
+    if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "🔄 Stopping $OD_CONTAINER_NAME..."
+      docker stop "$OD_CONTAINER_NAME" >/dev/null
+      echo "✅ $OD_CONTAINER_NAME stopped (data preserved in volume '$OD_VOLUME')"
+    else
+      echo "ℹ️  $OD_CONTAINER_NAME is not running"
+    fi
+  }
+
+  od_restart() {
+    od_stop
+    od_start "$@"
+  }
+
+  od_status() {
+    echo "Container : $OD_CONTAINER_NAME"
+    if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "State     : running"
+      local uptime
+      uptime="$(docker inspect -f '{{.State.StartedAt}}' "$OD_CONTAINER_NAME" 2>/dev/null || echo unknown)"
+      echo "Started   : $uptime"
+      local ports
+      ports="$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$OD_CONTAINER_NAME" 2>/dev/null || echo '{}')"
+      echo "Ports     : $ports"
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "State     : stopped"
+      echo "   Hint   : ai-run open-design start"
+    else
+      echo "State     : not installed"
+      echo "   Hint   : ai-run open-design init && ai-run open-design start"
+    fi
+
+    echo "Network   : $OD_NETWORK"
+    echo "Volume    : $OD_VOLUME"
+    if od_env_has_token; then
+      local tok
+      tok="$(od_read_token)"
+      echo "API token : set (***${tok: -4})"
+    else
+      echo "API token : (unset — run 'ai-run open-design init')"
+    fi
+
+    # Try health check (only meaningful if container is running)
+    if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      # Try in-container curl first (fast path); fall back to one-off container on same network
+      # because upstream daemon image may not bundle curl
+      local health_ok=false
+      if docker exec "$OD_CONTAINER_NAME" sh -c 'command -v curl' >/dev/null 2>&1; then
+        if docker exec "$OD_CONTAINER_NAME" curl -sf --max-time 3 http://127.0.0.1:7456/api/health >/dev/null 2>&1; then
+          health_ok=true
+        fi
+      else
+        # Fallback: probe via a tiny one-off container in the same network
+        if docker run --rm --network "$OD_NETWORK" curlimages/curl:latest \
+            -sf --max-time 3 "http://${OD_CONTAINER_NAME}:7456/api/health" >/dev/null 2>&1; then
+          health_ok=true
+        fi
+      fi
+      if [[ "$health_ok" == "true" ]]; then
+        echo "Health    : OK"
+      else
+        echo "Health    : FAIL (daemon not responding on /api/health)"
+      fi
+    fi
+  }
+
+  od_logs() {
+    if ! docker ps -a --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "❌ ERROR: container '$OD_CONTAINER_NAME' does not exist" >&2
+      exit 1
+    fi
+    docker logs "$@" "$OD_CONTAINER_NAME"
+  }
+
+  # Dispatch subcommand
+  SUBCMD="${1:-}"
+  if [[ -n "$SUBCMD" ]]; then shift; fi
+  case "$SUBCMD" in
+    init)    od_init "$@" ;;
+    start)   od_start "$@" ;;
+    stop)    od_stop ;;
+    restart) od_restart "$@" ;;
+    status)  od_status ;;
+    logs)    od_logs "$@" ;;
+    --help|-h|"") od_print_help ;;
+    *)
+      echo "❌ ERROR: unknown subcommand '$SUBCMD'" >&2
+      echo ""
+      od_print_help
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+# ────────────────────────────────────────────────────────────────
+# END OPEN-DESIGN DISPATCHER
+# ────────────────────────────────────────────────────────────────
+
+# Handle no tool specified
+if [[ -z "$TOOL" ]]; then
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    echo "❌ ERROR: No tool specified and no TTY available."
+    echo "   Use: ai-run <tool> [args...]"
+    exit 1
+  fi
+  SHELL_MODE=true
+fi
 
 # Parse flags
-SHELL_MODE=false
+# Note: SHELL_MODE may already be true if no tool was specified
+SHELL_MODE="${SHELL_MODE:-false}"
 NETWORK_FLAG=false
 NETWORK_ARG=""
 EXPOSE_ARG=""
 SERVER_PASSWORD=""
 PASSWORD_ENV_VAR=""
 ALLOW_UNSECURED=false
+GIT_FETCH_ONLY_FLAG=false
+NANO_BRAIN_AUTO_REPAIR=true
 TOOL_ARGS=()
+
+if [[ "${AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR:-}" == "1" ]]; then
+  NANO_BRAIN_AUTO_REPAIR=false
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -175,6 +493,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --allow-unsecured)
       ALLOW_UNSECURED=true
+      shift
+      ;;
+    --git-fetch)
+      GIT_FETCH_ONLY_FLAG=true
+      shift
+      ;;
+    --no-nano-brain-auto-repair)
+      NANO_BRAIN_AUTO_REPAIR=false
       shift
       ;;
     *)
@@ -411,7 +737,7 @@ upgrade_config_to_v2() {
   fi
 
   # Add missing v2 fields while preserving existing networks
-  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}})' \
+  jq '.version = 2 | .workspaces = (.workspaces // []) | .git = (.git // {"allowedWorkspaces":[],"keySelections":{}}) | .git.fetchOnlyWorkspaces = (.git.fetchOnlyWorkspaces // [])' \
     "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
     && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
   chmod 600 "$AI_SANDBOX_CONFIG"
@@ -426,7 +752,7 @@ init_config() {
 
   if [[ ! -f "$AI_SANDBOX_CONFIG" ]]; then
     # Create new v2 config
-    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
+    local initial_config='{"version":2,"workspaces":[],"git":{"allowedWorkspaces":[],"fetchOnlyWorkspaces":[],"keySelections":{}},"networks":{"global":[],"workspaces":{}}}'
     echo "$initial_config" > "$AI_SANDBOX_CONFIG"
     chmod 600 "$AI_SANDBOX_CONFIG"
 
@@ -455,7 +781,7 @@ while IFS= read -r ws; do
 done < <(read_workspaces)
 
 if [[ "$ALLOWED" != "true" ]]; then
-  echo "⚠️  SECURITY WARNING: You are running $TOOL outside a whitelisted workspace."
+  echo "⚠️  SECURITY WARNING: You are running ${TOOL:-shell} outside a whitelisted workspace."
   echo "   Current path: $CURRENT_DIR"
   echo ""
   echo "Allowing this path gives the AI container access to this folder."
@@ -497,7 +823,7 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
 
   # 2. Check if valid directory
   if [[ -d "$SCREENSHOT_DIR" ]]; then
-    
+
     # 3. Check if ALREADY whitelisted (exact match or parent)
     IS_WHITELISTED=false
     while IFS= read -r ws; do
@@ -520,7 +846,7 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
       echo ""
       # Use /dev/tty to ensure we read from user even if stdin is redirected
       read -p "Whitelist screenshots folder? [y/N]: " CONFIRM_SS < /dev/tty
-      
+
       if [[ "$CONFIRM_SS" =~ ^[Yy]$ ]]; then
         add_workspace "$SCREENSHOT_DIR"
         echo "✅ Added to whitelist."
@@ -533,17 +859,86 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
 fi
 
 if [[ "$AI_IMAGE_SOURCE" == "registry" ]]; then
-  IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-${TOOL}:latest"
+  IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-sandbox:latest"
 else
-  IMAGE="ai-${TOOL}:latest"
-    fi
+  IMAGE="ai-sandbox:latest"
+fi
 
-# V2 tool-centric paths
-HOME_DIR="$SANDBOX_DIR/tools/$TOOL/home"
+# Tool validation (warn if tool not in config.json)
+if [[ -n "$TOOL" ]]; then
+  if command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    INSTALLED_TOOLS=$(jq -r '.tools.installed // [] | .[]' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    if [[ -n "$INSTALLED_TOOLS" ]] && ! echo "$INSTALLED_TOOLS" | grep -qx "$TOOL"; then
+      echo "⚠️  WARNING: Tool '$TOOL' may not be installed in the sandbox image."
+      echo "   Installed tools: $(echo "$INSTALLED_TOOLS" | tr '\n' ', ' | sed 's/,$//')"
+      echo "   Run setup.sh to add tools."
+      echo ""
+    fi
+  fi
+fi
+
+# Shared home directory for all tools (unified image)
+HOME_DIR="$SANDBOX_DIR/home"
 GIT_SHARED_DIR="$SANDBOX_DIR/shared/git"
+CACHE_DIR="$SANDBOX_DIR/cache"
 
 mkdir -p "$HOME_DIR"
 mkdir -p "$GIT_SHARED_DIR"
+mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/bun" "$CACHE_DIR/pip" "$CACHE_DIR/playwright-browsers"
+
+# ============================================================================
+# MIGRATION V3: Merge per-tool home directories into unified home
+# ============================================================================
+migrate_to_unified_home() {
+  local marker_file="$SANDBOX_DIR/.migrated-unified-home"
+
+  # Skip if already migrated
+  [[ -f "$marker_file" ]] && return 0
+
+  # Check if any per-tool home directories exist
+  local needs_migration=false
+  for tool_home in "$SANDBOX_DIR"/tools/*/home; do
+    if [[ -d "$tool_home" ]]; then
+      needs_migration=true
+      break
+    fi
+  done
+
+  [[ "$needs_migration" == "false" ]] && { touch "$marker_file"; return 0; }
+
+  echo "🔄 Migrating per-tool home directories to unified home..."
+
+  local migrated_count=0
+  for tool_home in "$SANDBOX_DIR"/tools/*/home; do
+    [[ -d "$tool_home" ]] || continue
+    local tool_name
+    tool_name=$(basename "$(dirname "$tool_home")")
+    echo "  🔄 Migrating tools/$tool_name/home/ → home/"
+
+    # Use cp -rn (no-clobber) - works on macOS and Linux
+    # Falls back to rsync if cp -rn fails (some older systems)
+    # KNOWN ISSUE: glob * doesn't match dotfiles (.nano-brain, .config, etc.)
+    # TODO: fix with dotglob or rsync-first approach
+    if cp -rn "$tool_home/"* "$HOME_DIR/" 2>/dev/null; then
+      ((migrated_count++))
+    elif command -v rsync &>/dev/null; then
+      rsync -a --ignore-existing "$tool_home/" "$HOME_DIR/" 2>/dev/null && ((migrated_count++))
+    else
+      echo "  ⚠️  Could not migrate $tool_name (cp -rn and rsync unavailable)"
+    fi
+  done
+
+  # Create marker file
+  date -Iseconds > "$marker_file" 2>/dev/null || date > "$marker_file"
+
+  if [[ $migrated_count -gt 0 ]]; then
+    echo "✅ Migration complete! Merged $migrated_count tool home directories."
+    echo ""
+    echo "ℹ️  Old per-tool home directories preserved. Run 'npx @kokorolx/ai-sandbox-wrapper clean' to remove them."
+  fi
+}
+
+migrate_to_unified_home
 
 # Build volume mounts for all whitelisted workspaces
 VOLUME_MOUNTS=""
@@ -551,14 +946,49 @@ while IFS= read -r ws; do
   VOLUME_MOUNTS="$VOLUME_MOUNTS -v $ws:$ws:delegated"
 done < "$WORKSPACES_FILE"
 
-# Tool-specific config migration and setup
-# All tool configs now live in HOME_DIR (~/.ai-sandbox/home/$TOOL/)
-# which is mounted as /home/agent in the container
+# Config mount registry for all tools
+# Maps tool name to space-separated config paths (relative to $HOME)
+get_tool_configs() {
+  case "$1" in
+    amp)       echo ".config/amp .local/share/amp" ;;
+    opencode)  echo ".config/opencode .local/share/opencode" ;;
+    claude)    echo ".claude" ;;
+    openclaw)  echo ".openclaw" ;;
+    droid)     echo ".config/droid" ;;
+    qoder)     echo ".config/qoder" ;;
+    auggie)    echo ".config/auggie" ;;
+    codebuddy) echo ".config/codebuddy" ;;
+    jules)     echo ".config/jules" ;;
+    shai)      echo ".config/shai" ;;
+    gemini)    echo ".config/gemini" ;;
+    aider)     echo ".config/aider .aider" ;;
+    kilo)      echo ".config/kilo" ;;
+    codex)     echo ".config/codex" ;;
+    qwen)      echo ".config/qwen" ;;
+  esac
+}
 
-# Tool-specific config persistence
-# Instead of copying (one-way), we now bind-mount host paths directly
-# to ensure changes inside the container persist to the host.
+# All known tools (for fallback)
+ALL_KNOWN_TOOLS="amp opencode claude openclaw droid qoder auggie codebuddy jules shai gemini aider kilo codex qwen"
+
+# Get list of installed tools from config.json, fallback to all known tools
+get_installed_tools() {
+  local installed
+  if command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    installed=$(jq -r '.tools.installed[]? // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  fi
+  if [[ -z "$installed" ]]; then
+    # Fallback: return all known tools in registry
+    echo "$ALL_KNOWN_TOOLS"
+  else
+    echo "$installed"
+  fi
+}
+
+# Tool config persistence via bind mounts
+# Bind-mount host paths directly to ensure changes persist to the host.
 TOOL_CONFIG_MOUNTS=""
+RG_COMPAT_MOUNT=""
 
 mount_tool_config() {
   local host_path="$1"
@@ -575,63 +1005,207 @@ mount_tool_config() {
   fi
 }
 
-case "$TOOL" in
-  amp)
-    mount_tool_config "$HOME/.config/amp" ".config/amp"
-    mount_tool_config "$HOME/.local/share/amp" ".local/share/amp"
-    ;;
-  opencode)
-    mount_tool_config "$HOME/.config/opencode" ".config/opencode"
-    mount_tool_config "$HOME/.local/share/opencode" ".local/share/opencode"
-    ;;
-  claude)
-    mount_tool_config "$HOME/.claude" ".claude"
-    ;;
-  droid)
-    mount_tool_config "$HOME/.config/droid" ".config/droid"
-    ;;
-  qoder)
-    mount_tool_config "$HOME/.config/qoder" ".config/qoder"
-    ;;
-  auggie)
-    mount_tool_config "$HOME/.config/auggie" ".config/auggie"
-    ;;
-  codebuddy)
-    mount_tool_config "$HOME/.config/codebuddy" ".config/codebuddy"
-    ;;
-  jules)
-    mount_tool_config "$HOME/.config/jules" ".config/jules"
-    ;;
-  shai)
-    mount_tool_config "$HOME/.config/shai" ".config/shai"
-    ;;
-  gemini)
-    mount_tool_config "$HOME/.config/gemini" ".config/gemini"
-    ;;
-  aider)
-    mount_tool_config "$HOME/.config/aider" ".config/aider"
-    mount_tool_config "$HOME/.aider" ".aider"
-    ;;
-  kilo)
-    mount_tool_config "$HOME/.config/kilo" ".config/kilo"
-    ;;
-  codex)
-    mount_tool_config "$HOME/.config/codex" ".config/codex"
-    ;;
-  qwen)
-    mount_tool_config "$HOME/.config/qwen" ".config/qwen"
-    ;;
-esac
+# Mount configs for all installed tools (unified image)
+for tool in $(get_installed_tools); do
+  for cfg_path in $(get_tool_configs "$tool"); do
+    mount_tool_config "$HOME/$cfg_path" "$cfg_path"
+  done
+done
+
+setup_opencode_rg_compat() {
+  [[ "$TOOL" != "opencode" ]] && return 0
+
+  local bundled_rg="$HOME/.local/share/opencode/bin/rg"
+  local rg_shim_path="$SANDBOX_DIR/shared/rg-linux-shim"
+
+  [[ -f "$bundled_rg" ]] || return 0
+  command -v file &>/dev/null || return 0
+
+  local rg_file_info
+  rg_file_info=$(file -b "$bundled_rg" 2>/dev/null || true)
+
+  if echo "$rg_file_info" | grep -qi "Mach-O"; then
+    mkdir -p "$(dirname "$rg_shim_path")"
+    cat > "$rg_shim_path" << 'EOF'
+#!/usr/bin/env bash
+exec /usr/bin/rg "$@"
+EOF
+    chmod +x "$rg_shim_path"
+    RG_COMPAT_MOUNT="-v $rg_shim_path:/home/agent/.local/share/opencode/bin/rg:ro"
+    echo "⚠️  Detected incompatible OpenCode bundled rg (Mach-O). Using /usr/bin/rg in container."
+  fi
+}
+
+setup_opencode_rg_compat
+
+# Bundle OpenCode default skills (if opencode is installed)
+if get_installed_tools | grep -qw "opencode"; then
+  AIRUN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  BUNDLED_SKILLS_DIR="$AIRUN_DIR/../skills"
+  if [[ -d "$BUNDLED_SKILLS_DIR" ]]; then
+    for skill_dir in "$BUNDLED_SKILLS_DIR"/*/; do
+      [[ ! -d "$skill_dir" ]] && continue
+      skill_name=$(basename "$skill_dir")
+      target_dir="$HOME/.config/opencode/skills/$skill_name"
+      if [[ ! -d "$target_dir" ]]; then
+        mkdir -p "$target_dir"
+        cp -r "$skill_dir"* "$target_dir/" 2>/dev/null || true
+      fi
+    done
+  fi
+fi
 
 # Ensure required directories exist in HOME_DIR
 mkdir -p "$HOME_DIR/.config" "$HOME_DIR/.local/share" "$HOME_DIR/.cache" "$HOME_DIR/.bun"
 
-# Project-level config mount (if exists)
-CONFIG_MOUNT=""
-PROJECT_CONFIG="$CURRENT_DIR/.$TOOL.json"
+SHARED_CACHE_MOUNTS="-v $CACHE_DIR/npm:/home/agent/.npm:delegated"
+SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/bun:/home/agent/.bun/install/cache:delegated"
+SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/pip:/home/agent/.cache/pip:delegated"
+SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $CACHE_DIR/playwright-browsers:/opt/playwright-browsers:delegated"
 
-if [[ -f "$PROJECT_CONFIG" ]]; then
-  CONFIG_MOUNT="-v $PROJECT_CONFIG:$CURRENT_DIR/.$TOOL.json:delegated"
+# Shared skills mount (from host, read-only)
+HOST_SKILLS_DIR="$HOME/.config/agents/skills"
+if [[ -d "$HOST_SKILLS_DIR" ]]; then
+  SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/agents/skills:ro"
+  SHARED_CACHE_MOUNTS="$SHARED_CACHE_MOUNTS -v $HOST_SKILLS_DIR:/home/agent/.config/opencode/skills:ro"
+fi
+
+# Host Chrome for Playwright MCP (via CDP - Chrome DevTools Protocol)
+# NOTE: macOS Chrome binary (Mach-O) cannot run inside a Linux container.
+# Instead, we launch Chrome on the host with --remote-debugging-port and
+# connect from the container via CDP. Each container gets its own port and
+# its own MCP entry; entries are sweep-cleaned on every start.
+HOST_CHROME_CDP=false
+HOST_CHROME_CDP_PORT=19222
+PLAYWRIGHT_MCP_NAME=""
+CHROME_DEVTOOLS_MCP_NAME=""
+# Portable symlink-resolving SCRIPT_DIR (macOS readlink has no -f).
+# Needed because ai-run is typically invoked via the ~/bin/ai-run symlink.
+_pmcp_resolve_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")/.." && pwd
+}
+SCRIPT_DIR="$(_pmcp_resolve_script_dir)"
+unset -f _pmcp_resolve_script_dir
+# shellcheck source=lib/playwright-mcp-config.sh
+[[ -f "$SCRIPT_DIR/lib/playwright-mcp-config.sh" ]] && source "$SCRIPT_DIR/lib/playwright-mcp-config.sh"
+
+if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]] && declare -f pmcp::sanitize_name >/dev/null; then
+  PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+    # Ask user whether to open host Chrome browser
+    if [[ -t 0 ]]; then
+      echo ""
+      echo "🌐 Host Chrome browser is configured: $PLAYWRIGHT_HOST_CHROME"
+      printf "   Open browser for AI agent? [y/N] "
+      read -r -t 10 OPEN_CHROME_ANSWER || OPEN_CHROME_ANSWER=""
+      echo ""
+      if [[ ! "$OPEN_CHROME_ANSWER" =~ ^[Yy]$ ]]; then
+        echo "   ⏭️  Skipping host Chrome (using container Chromium if available)"
+        PLAYWRIGHT_HOST_CHROME=""
+      fi
+    fi
+  fi
+  if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+    HOST_CHROME_CDP=true
+    echo "🌐 Host Chrome CDP mode: $PLAYWRIGHT_HOST_CHROME"
+
+    # CONTAINER_NAME has the form "--name foo" or is empty. Extract the value
+    # for hashing only — the MCP key uses just the port (containers that
+    # collide on a port intentionally share the same Chrome / MCP entry).
+    CONTAINER_NAME_VALUE="${CONTAINER_NAME#--name }"
+    [[ "$CONTAINER_NAME_VALUE" == "$CONTAINER_NAME" ]] && CONTAINER_NAME_VALUE="anon-$$"
+
+    # Deterministic port per container name
+    CONTAINER_HASH=$(echo "$CONTAINER_NAME_VALUE" | md5sum | cut -c1-4)
+    HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
+
+    # Only register entries for MCP binaries actually present in the image
+    # (tracked in $AI_SANDBOX_CONFIG by setup.sh). Otherwise opencode would
+    # try to spawn a missing binary and fail. (is_mcp_installed is defined
+    # later in the file, so use jq inline here.)
+    if jq -e '.mcp.installed // [] | index("playwright") != null' "$AI_SANDBOX_CONFIG" &>/dev/null; then
+      PLAYWRIGHT_MCP_NAME="playwright_port_${HOST_CHROME_CDP_PORT}"
+    fi
+    if jq -e '.mcp.installed // [] | index("chrome-devtools") != null' "$AI_SANDBOX_CONFIG" &>/dev/null; then
+      CHROME_DEVTOOLS_MCP_NAME="chrome-devtools_port_${HOST_CHROME_CDP_PORT}"
+    fi
+
+    # Reuse-if-alive: probe before launching
+    if pmcp::probe_chrome "$HOST_CHROME_CDP_PORT"; then
+      echo "  ✅ Chrome already running on port $HOST_CHROME_CDP_PORT (reusing)"
+    else
+      echo "  🚀 Launching Chrome with remote debugging on port $HOST_CHROME_CDP_PORT..."
+      mkdir -p "$SANDBOX_DIR/chrome-profile-$HOST_CHROME_CDP_PORT"
+      "$PLAYWRIGHT_HOST_CHROME" \
+        --remote-debugging-port="$HOST_CHROME_CDP_PORT" \
+        --user-data-dir="$SANDBOX_DIR/chrome-profile-$HOST_CHROME_CDP_PORT" \
+        --no-first-run \
+        --no-default-browser-check \
+        &>/dev/null &
+      CHROME_PID=$!
+      for i in {1..20}; do
+        if pmcp::probe_chrome "$HOST_CHROME_CDP_PORT"; then
+          echo "  ✅ Chrome ready (PID: $CHROME_PID, port: $HOST_CHROME_CDP_PORT)"
+          echo "  👀 You can watch the browser window to see what the AI is doing"
+          break
+        fi
+        sleep 0.25
+      done
+      if ! pmcp::probe_chrome "$HOST_CHROME_CDP_PORT"; then
+        echo "  ⚠️  Chrome failed to start. Falling back to container Chromium."
+        HOST_CHROME_CDP=false
+        kill "$CHROME_PID" 2>/dev/null || true
+        PLAYWRIGHT_MCP_NAME=""
+        CHROME_DEVTOOLS_MCP_NAME=""
+      fi
+    fi
+
+    # Locked sweep+register on the shared OpenCode config — both
+    # playwright-mcp and chrome-devtools-mcp point at the same host Chrome.
+    if [[ "$HOST_CHROME_CDP" == "true" ]]; then
+      OPENCODE_CONFIG_FILE="$HOME/.config/opencode/opencode.json"
+      LOCK_FILE="$HOME/.config/opencode/.playwright.lock"
+      mkdir -p "$(dirname "$OPENCODE_CONFIG_FILE")"
+      [[ -f "$OPENCODE_CONFIG_FILE" ]] || echo '{}' > "$OPENCODE_CONFIG_FILE"
+      pmcp::with_lock "$LOCK_FILE" pmcp::register_host_chrome \
+        "$OPENCODE_CONFIG_FILE" "$HOST_CHROME_CDP_PORT" \
+        "$PLAYWRIGHT_MCP_NAME" "$CHROME_DEVTOOLS_MCP_NAME"
+      rc=$?
+      if [[ "$rc" == "99" ]]; then
+        echo "  ⚠️  Could not acquire MCP config lock within 5s; skipping registration."
+        PLAYWRIGHT_MCP_NAME=""
+        CHROME_DEVTOOLS_MCP_NAME=""
+      elif [[ "$rc" != "0" ]]; then
+        echo "  ⚠️  MCP config update failed (rc=$rc); skipping registration."
+        PLAYWRIGHT_MCP_NAME=""
+        CHROME_DEVTOOLS_MCP_NAME=""
+      fi
+    fi
+  fi
+fi
+
+# Nano-brain mount: writable so container can modify config, write memory, logs, etc.
+NANO_BRAIN_MOUNT=""
+if [[ -d "$HOME/.nano-brain" ]]; then
+  mkdir -p "$HOME/.nano-brain/logs" "$HOME/.nano-brain/memory"
+  NANO_BRAIN_MOUNT="-v $HOME/.nano-brain:/home/agent/.nano-brain:delegated"
+  echo "ℹ️  Mounted .nano-brain (rw)"
+fi
+
+
+# Project-level config mount (if exists and tool specified)
+CONFIG_MOUNT=""
+if [[ -n "$TOOL" ]]; then
+  PROJECT_CONFIG="$CURRENT_DIR/.$TOOL.json"
+  if [[ -f "$PROJECT_CONFIG" ]]; then
+    CONFIG_MOUNT="-v $PROJECT_CONFIG:$CURRENT_DIR/.$TOOL.json:delegated"
+  fi
 fi
 
 # ============================================================================
@@ -725,6 +1299,19 @@ discover_custom_networks() {
 get_network_containers() {
   local network="$1"
   docker network inspect "$network" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs | tr ' ' ', '
+}
+
+# Ensure shared Docker network exists for cross-container service discovery
+# (e.g., agent containers reaching the open-design daemon by name)
+ensure_network() {
+  local net="${1:-ai-sandbox}"
+  if ! docker network inspect "$net" >/dev/null 2>&1; then
+    docker network create "$net" >/dev/null 2>&1 || {
+      echo "⚠️  WARNING: failed to create Docker network '$net'" >&2
+      return 1
+    }
+  fi
+  return 0
 }
 
 # Interactive network selection menu (multi-select)
@@ -869,8 +1456,8 @@ show_network_menu() {
     if [[ "$key" == $'\x1b' ]]; then
       read -rsn2 -t 1 escape_seq
       case "$escape_seq" in
-        '[A') ((cursor > 0)) && ((cursor--)) ;;
-        '[B') ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) ;;
+        '[A') ((cursor > 0)) && ((cursor--)) || true ;;
+        '[B') ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) || true ;;
       esac
     else
       case "$key" in
@@ -916,8 +1503,8 @@ show_network_menu() {
         ''|$'\n'|$'\r')
           break
           ;;
-        k) ((cursor > 0)) && ((cursor--)) ;;
-        j) ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) ;;
+        k) ((cursor > 0)) && ((cursor--)) || true ;;
+        j) ((cursor < ${#all_nets[@]} - 1)) && ((cursor++)) || true ;;
       esac
     fi
   done
@@ -972,14 +1559,14 @@ show_save_prompt() {
     if [[ "$key" == $'\x1b' ]]; then
       read -rsn2 -t 1 escape_seq
       case "$escape_seq" in
-        '[A') ((cursor > 0)) && ((cursor--)) ;;
-        '[B') ((cursor < 2)) && ((cursor++)) ;;
+        '[A') ((cursor > 0)) && ((cursor--)) || true ;;
+        '[B') ((cursor < 2)) && ((cursor++)) || true ;;
       esac
     else
       case "$key" in
         ''|$'\n'|$'\r') break ;;
-        k) ((cursor > 0)) && ((cursor--)) ;;
-        j) ((cursor < 2)) && ((cursor++)) ;;
+        k) ((cursor > 0)) && ((cursor--)) || true ;;
+        j) ((cursor < 2)) && ((cursor++)) || true ;;
       esac
     fi
   done
@@ -1028,8 +1615,55 @@ if [[ ${#SELECTED_NETWORKS[@]} -gt 0 ]]; then
   done < <(validate_networks "${SELECTED_NETWORKS[@]}")
 fi
 
+# Detect SSH agent socket (prefer agent forwarding over key copying)
+get_ssh_agent_socket() {
+  # macOS Docker Desktop: special socket path
+  if [[ "$(uname)" == "Darwin" ]]; then
+    local docker_sock="/run/host-services/ssh-auth.sock"
+    # Docker Desktop forwards the host agent to this path inside the VM
+    if [[ -n "$SSH_AUTH_SOCK" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
+      echo "$SSH_AUTH_SOCK"
+      return 0
+    fi
+  fi
+  # Standard SSH agent socket (Linux, macOS with regular agent)
+  if [[ -n "$SSH_AUTH_SOCK" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
+    echo "$SSH_AUTH_SOCK"
+    return 0
+  fi
+  return 1
+}
+
+# Mount SSH agent socket + known_hosts/config (no private keys)
+setup_ssh_agent_forwarding() {
+  local agent_sock="$1"
+
+  # Mount the agent socket
+  GIT_MOUNTS="$GIT_MOUNTS -v $agent_sock:/ssh-agent"
+  SSH_AGENT_ENV="-e SSH_AUTH_SOCK=/ssh-agent"
+
+  # Still need known_hosts and config for host verification
+  mkdir -p "$GIT_CACHE_DIR/ssh"
+
+  if [ -f "$HOME/.ssh/known_hosts" ]; then
+    cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+    chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+  fi
+
+  if [ -f "$HOME/.ssh/config" ]; then
+    cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+    chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+  fi
+
+  chmod 700 "$GIT_CACHE_DIR/ssh"
+  GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
+
+  echo "🔒 SSH agent forwarding active (keys never enter container)"
+}
+
 # Git access control (opt-in per workspace)
 GIT_MOUNTS=""
+SSH_AGENT_ENV=""
 GIT_ALLOWED_FILE="$SANDBOX_DIR/git-allowed"
 GIT_CACHE_DIR="$GIT_SHARED_DIR"  # V2: Uses shared/git instead of cache/git
 touch "$GIT_ALLOWED_FILE" 2>/dev/null || true
@@ -1047,81 +1681,137 @@ is_git_allowed() {
   return 1
 }
 
+# Check if workspace is in fetch-only mode (config.json)
+is_git_fetch_only() {
+  local ws="$1"
+  if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    local fetch_only=$(jq -r --arg ws "$ws" '.git.fetchOnlyWorkspaces // [] | index($ws) // -1' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+    [[ "$fetch_only" -ge 0 ]] && return 0
+  fi
+  return 1
+}
+
+# Apply fetch-only restrictions by adding pushInsteadOf to gitconfig
+apply_git_fetch_only() {
+  local gitconfig_path="$HOME_DIR/.gitconfig"
+  # Ensure .gitconfig exists
+  touch "$gitconfig_path"
+  # Append push-blocking config (redirects all push URLs to non-existent protocol)
+  cat >> "$gitconfig_path" << 'FETCHONLY'
+
+# AI Sandbox: Git fetch-only mode (push disabled)
+[url "no-push://blocked"]
+	pushInsteadOf = git@
+	pushInsteadOf = ssh://
+	pushInsteadOf = https://
+	pushInsteadOf = http://
+FETCHONLY
+  echo "🔒 Git fetch-only mode: push operations are blocked"
+}
+
+GIT_FETCH_ONLY_MODE=false
+
+# Check --git-fetch flag
+if [[ "$GIT_FETCH_ONLY_FLAG" == "true" ]]; then
+  GIT_FETCH_ONLY_MODE=true
+fi
+
+# Check if workspace is in fetch-only list
+if is_git_fetch_only "$CURRENT_DIR"; then
+  GIT_FETCH_ONLY_MODE=true
+fi
+
 # Check if Git access is allowed for this workspace
-if is_git_allowed "$CURRENT_DIR"; then
+if is_git_allowed "$CURRENT_DIR" || is_git_fetch_only "$CURRENT_DIR" || [[ "$GIT_FETCH_ONLY_FLAG" == "true" ]]; then
   # Previously allowed for this workspace
   # Check if saved keys exist for this workspace
   WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
   SAVED_KEYS_FILE="$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"  # V2: Uses shared/git/keys/
 
   if [ -f "$SAVED_KEYS_FILE" ]; then
-    # Use previously saved key selection
-    echo "📋 Syncing Git credentials..."
-    if [ -d "$GIT_CACHE_DIR/ssh" ]; then
-      chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-      rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-    fi
-    mkdir -p "$GIT_CACHE_DIR/ssh"
+    # Try SSH agent forwarding first (more secure)
+    AGENT_SOCK=""
+    if AGENT_SOCK=$(get_ssh_agent_socket); then
+      echo "📋 Setting up Git credentials (agent forwarding)..."
+      setup_ssh_agent_forwarding "$AGENT_SOCK"
+      echo "✅ Git credentials ready (agent forwarding)"
+    else
+      # Fallback: copy key files (less secure)
+      echo "📋 Syncing Git credentials..."
+      echo "⚠️  SSH agent not detected. Falling back to key file mounting."
+      echo "   For better security, start ssh-agent: eval \"\$(ssh-agent -s)\" && ssh-add"
 
-    # Read saved keys and copy them
-    SAVED_KEYS=()
-    while IFS= read -r key; do
-      [ -n "$key" ] && SAVED_KEYS+=("$key")
-    done < "$SAVED_KEYS_FILE"
-
-    for key in "${SAVED_KEYS[@]}"; do
-      [ -z "$key" ] && continue
-      src_file="$HOME/.ssh/$key"
-      dst_file="$GIT_CACHE_DIR/ssh/$key"
-
-      dst_dir=$(dirname "$dst_file")
-      mkdir -p "$dst_dir" 2>/dev/null || true
-      chmod 700 "$dst_dir" 2>/dev/null || true
-
-      if [ -f "$src_file" ]; then
-        cp "$src_file" "$dst_file" 2>/dev/null || true
-        chmod 600 "$dst_file" 2>/dev/null || true
+      if [ -d "$GIT_CACHE_DIR/ssh" ]; then
+        chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+        rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
       fi
-    done
+      mkdir -p "$GIT_CACHE_DIR/ssh"
 
-    # Copy filtered SSH config (only hosts needed for this repo)
-    if [ -f "$HOME/.ssh/config" ]; then
-      SETUP_SSH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup-ssh-config"
-      if [ -x "$SETUP_SSH" ]; then
-        # Join SAVED_KEYS into a comma-separated string for --keys
-        KEYS_ARG=$(IFS=,; echo "${SAVED_KEYS[*]}")
-        output=$("$SETUP_SSH" --keys "$KEYS_ARG" 2>&1)
-        TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
-        if [ -f "$TEMP_CONFIG" ]; then
-          cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-          chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+      # Read saved keys and copy them
+      SAVED_KEYS=()
+      while IFS= read -r key; do
+        [ -n "$key" ] && SAVED_KEYS+=("$key")
+      done < "$SAVED_KEYS_FILE"
+
+      for key in "${SAVED_KEYS[@]}"; do
+        [ -z "$key" ] && continue
+        src_file="$HOME/.ssh/$key"
+        dst_file="$GIT_CACHE_DIR/ssh/$key"
+
+        dst_dir=$(dirname "$dst_file")
+        mkdir -p "$dst_dir" 2>/dev/null || true
+        chmod 700 "$dst_dir" 2>/dev/null || true
+
+        if [ -f "$src_file" ]; then
+          cp "$src_file" "$dst_file" 2>/dev/null || true
+          chmod 600 "$dst_file" 2>/dev/null || true
+        fi
+      done
+
+      # Copy filtered SSH config (only hosts needed for this repo)
+      if [ -f "$HOME/.ssh/config" ]; then
+        SETUP_SSH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup-ssh-config"
+        if [ -x "$SETUP_SSH" ]; then
+          # Join SAVED_KEYS into a comma-separated string for --keys
+          KEYS_ARG=$(IFS=,; echo "${SAVED_KEYS[*]}")
+          output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
+          TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
+          if [ -f "$TEMP_CONFIG" ]; then
+            cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+            chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+          else
+            cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+            chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+          fi
         else
           cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
           chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
         fi
-      else
-        cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-        chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
       fi
+
+      if [ -f "$HOME/.ssh/known_hosts" ]; then
+        cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+        chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+      fi
+
+      # Ensure all directories have correct permissions (recursive)
+      chmod 700 "$GIT_CACHE_DIR/ssh"
+      find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
+      find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
+
+      GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
+      echo "✅ Git credentials synced"
     fi
-
-    if [ -f "$HOME/.ssh/known_hosts" ]; then
-      cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-      chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-    fi
-
-    # Ensure all directories have correct permissions (recursive)
-    chmod 700 "$GIT_CACHE_DIR/ssh"
-    find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
-    find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
-
-    GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
-    echo "✅ Git credentials synced"
   fi
 
   if [ -f "$HOME/.gitconfig" ]; then
     # Copy gitconfig to HOME_DIR (can't mount file inside mounted directory)
     cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
+  fi
+
+  # Apply fetch-only restrictions if mode is active
+  if [[ "$GIT_FETCH_ONLY_MODE" == "true" ]]; then
+    apply_git_fetch_only
   fi
 else
   # Ask user if they want Git access for this workspace (only in interactive mode)
@@ -1135,124 +1825,186 @@ else
     echo "  1) Yes, allow once (this session only)"
     echo "  2) Yes, always allow for this workspace"
     echo "  3) No, keep Git disabled (secure default)"
+    echo "  4) Fetch only - allow once (no push, this session)"
+    echo "  5) Fetch only - always for this workspace (no push)"
     echo ""
-    read -p "Choice [1-3]: " git_choice
+    read -p "Choice [1-5]: " git_choice
 
     case "$git_choice" in
-      1|2)
-        # Interactive SSH key selection
-        echo ""
-        echo "🔑 SSH Key Selection"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      1|2|4|5)
+        # Try SSH agent forwarding first (more secure - no key selection needed)
+        AGENT_SOCK=""
+        if AGENT_SOCK=$(get_ssh_agent_socket); then
+          echo ""
+          echo "🔒 SSH Agent Forwarding"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          setup_ssh_agent_forwarding "$AGENT_SOCK"
 
-        # Source the SSH key selector library
-        # Resolve symlink to get actual project directory
-        SCRIPT_PATH="${BASH_SOURCE[0]}"
-        while [ -L "$SCRIPT_PATH" ]; do
-          SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-          SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
-          [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
-        done
-        SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-        source "$SCRIPT_DIR/../lib/ssh-key-selector.sh"
+          # Copy gitconfig
+          if [ -f "$HOME/.gitconfig" ]; then
+            cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
+          fi
 
-        # Let user select keys
-        if select_ssh_keys; then
-          if [ ${#SELECTED_SSH_KEYS[@]} -gt 0 ]; then
-            echo "📋 Copying selected credentials to cache..."
-            if [ -d "$GIT_CACHE_DIR/ssh" ]; then
-              chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
-              rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+          if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
+            GIT_FETCH_ONLY_MODE=true
+          fi
+
+          # Save workspace preference (same logic as before)
+          if [ "$git_choice" = "2" ]; then
+            echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
+            if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+              jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+              chmod 600 "$AI_SANDBOX_CONFIG"
             fi
-            mkdir -p "$GIT_CACHE_DIR/ssh"
+            echo "✅ Git access enabled and saved for: $CURRENT_DIR"
+          elif [ "$git_choice" = "5" ]; then
+            if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+              jq --arg ws "$CURRENT_DIR" '.git.fetchOnlyWorkspaces = ((.git.fetchOnlyWorkspaces // []) + [$ws] | unique)' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+              chmod 600 "$AI_SANDBOX_CONFIG"
+            fi
+            echo "✅ Git fetch-only access enabled and saved for: $CURRENT_DIR"
+          elif [ "$git_choice" = "4" ]; then
+            echo "✅ Git fetch-only access enabled for this session"
+          else
+            echo "✅ Git access enabled for this session"
+          fi
+        else
+          # No SSH agent — fall back to key selection + copy
+          echo ""
+          echo "⚠️  SSH agent not detected. Using key file mounting."
+          echo "   For better security: eval \"\$(ssh-agent -s)\" && ssh-add"
+          echo ""
+          echo "🔑 SSH Key Selection"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            # Copy selected SSH keys (preserve directory structure exactly)
-            for key in "${SELECTED_SSH_KEYS[@]}"; do
-              echo "  → Copying $key..."
-              src_file="$HOME/.ssh/$key"
-              dst_file="$GIT_CACHE_DIR/ssh/$key"
+          # Source the SSH key selector library
+          # Resolve symlink to get actual project directory
+          SCRIPT_PATH="${BASH_SOURCE[0]}"
+          while [ -L "$SCRIPT_PATH" ]; do
+            SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+            SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+            [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+          done
+          SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+          source "$SCRIPT_DIR/../lib/ssh-key-selector.sh"
 
-              # Create parent directory with correct permissions
-              dst_dir=$(dirname "$dst_file")
-              mkdir -p "$dst_dir"
-              chmod 700 "$dst_dir"
-
-              # Copy the file and set permissions
-              if [ -f "$src_file" ]; then
-                cp "$src_file" "$dst_file"
-                chmod 600 "$dst_file"
-              else
-                echo "    ⚠️  Warning: $src_file not found, skipping"
+          # Let user select keys
+          if select_ssh_keys; then
+            if [ ${#SELECTED_SSH_KEYS[@]} -gt 0 ]; then
+              echo "📋 Copying selected credentials to cache..."
+              if [ -d "$GIT_CACHE_DIR/ssh" ]; then
+                chmod -R 700 "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
+                rm -rf "$GIT_CACHE_DIR/ssh" 2>/dev/null || true
               fi
-            done
+              mkdir -p "$GIT_CACHE_DIR/ssh"
 
-            # Copy filtered SSH config (only hosts needed for this repo)
-            if [ -f "$HOME/.ssh/config" ]; then
-              echo "  → Generating filtered SSH config..."
-              # Run setup-ssh-config to get filtered config
-              SETUP_SSH="$SCRIPT_DIR/setup-ssh-config"
-              if [ -x "$SETUP_SSH" ]; then
-                # Join SELECTED_SSH_KEYS into a comma-separated string for --keys
-                KEYS_ARG=$(IFS=,; echo "${SELECTED_SSH_KEYS[*]}")
-                # Run it and capture the filtered config path
-                output=$("$SETUP_SSH" --keys "$KEYS_ARG" 2>&1)
-                TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
-                if [ -f "$TEMP_CONFIG" ]; then
-                  cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                  chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+              # Copy selected SSH keys (preserve directory structure exactly)
+              for key in "${SELECTED_SSH_KEYS[@]}"; do
+                echo "  → Copying $key..."
+                src_file="$HOME/.ssh/$key"
+                dst_file="$GIT_CACHE_DIR/ssh/$key"
+
+                # Create parent directory with correct permissions
+                dst_dir=$(dirname "$dst_file")
+                mkdir -p "$dst_dir"
+                chmod 700 "$dst_dir"
+
+                # Copy the file and set permissions
+                if [ -f "$src_file" ]; then
+                  cp "$src_file" "$dst_file"
+                  chmod 600 "$dst_file"
                 else
-                  # Fallback to copying full config if setup-ssh-config fails
+                  echo "    ⚠️  Warning: $src_file not found, skipping"
+                fi
+              done
+
+              # Copy filtered SSH config (only hosts needed for this repo)
+              if [ -f "$HOME/.ssh/config" ]; then
+                echo "  → Generating filtered SSH config..."
+                # Run setup-ssh-config to get filtered config
+                SETUP_SSH="$SCRIPT_DIR/setup-ssh-config"
+                if [ -x "$SETUP_SSH" ]; then
+                  # Join SELECTED_SSH_KEYS into a comma-separated string for --keys
+                  KEYS_ARG=$(IFS=,; echo "${SELECTED_SSH_KEYS[*]}")
+                  # Run it and capture the filtered config path
+                  output=$( "$SETUP_SSH" --keys "$KEYS_ARG" 2>&1 ) || true
+                  TEMP_CONFIG=$(echo "$output" | grep "Config:" | tail -1 | awk '{print $NF}')
+                  if [ -f "$TEMP_CONFIG" ]; then
+                    cp "$TEMP_CONFIG" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                    chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                  else
+                    # Fallback to copying full config if setup-ssh-config fails
+                    cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                    chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                  fi
+                else
+                  # Fallback: copy full config
                   cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
                   chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
                 fi
+              fi
+
+              if [ -f "$HOME/.ssh/known_hosts" ]; then
+                echo "  → Copying known_hosts..."
+                cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+                chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
+              fi
+
+              # Ensure all directories and files have correct permissions (recursive)
+              chmod 700 "$GIT_CACHE_DIR/ssh"
+              find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
+              find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
+
+              GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
+
+              # Copy gitconfig
+              if [ -f "$HOME/.gitconfig" ]; then
+                echo "  → Copying .gitconfig..."
+                cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
+              fi
+
+              if [[ "$git_choice" == "4" || "$git_choice" == "5" ]]; then
+                GIT_FETCH_ONLY_MODE=true
+              fi
+              if [ "$git_choice" = "2" ]; then
+                # Save workspace and selected keys for future sessions
+                echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
+                # Also save to config.json
+                if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+                  jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+                  chmod 600 "$AI_SANDBOX_CONFIG"
+                fi
+                # Save selected keys (one per line for easier parsing)
+                WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
+                mkdir -p "$GIT_SHARED_DIR/keys"
+                printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
+                echo "✅ Git access enabled and saved for: $CURRENT_DIR"
+              elif [ "$git_choice" = "5" ]; then
+                # Save workspace to fetchOnlyWorkspaces
+                if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+                  jq --arg ws "$CURRENT_DIR" '.git.fetchOnlyWorkspaces = ((.git.fetchOnlyWorkspaces // []) + [$ws] | unique)' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
+                    && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
+                  chmod 600 "$AI_SANDBOX_CONFIG"
+                fi
+                # Save selected keys (one per line for easier parsing)
+                WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
+                mkdir -p "$GIT_SHARED_DIR/keys"
+                printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
+                echo "✅ Git fetch-only access enabled and saved for: $CURRENT_DIR"
+              elif [ "$git_choice" = "4" ]; then
+                echo "✅ Git fetch-only access enabled for this session"
               else
-                # Fallback: copy full config
-                cp "$HOME/.ssh/config" "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
-                chmod 600 "$GIT_CACHE_DIR/ssh/config" 2>/dev/null || true
+                echo "✅ Git access enabled for this session"
               fi
-            fi
-
-            if [ -f "$HOME/.ssh/known_hosts" ]; then
-              echo "  → Copying known_hosts..."
-              cp "$HOME/.ssh/known_hosts" "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-              chmod 600 "$GIT_CACHE_DIR/ssh/known_hosts" 2>/dev/null || true
-            fi
-
-            # Ensure all directories and files have correct permissions (recursive)
-            chmod 700 "$GIT_CACHE_DIR/ssh"
-            find "$GIT_CACHE_DIR/ssh" -type d -exec chmod 700 {} \;
-            find "$GIT_CACHE_DIR/ssh" -type f ! -name "config" ! -name "known_hosts" -exec chmod 600 {} \;
-
-            GIT_MOUNTS="$GIT_MOUNTS -v $GIT_CACHE_DIR/ssh:/home/agent/.ssh:ro"
-
-            # Copy gitconfig
-            if [ -f "$HOME/.gitconfig" ]; then
-              echo "  → Copying .gitconfig..."
-              cp "$HOME/.gitconfig" "$HOME_DIR/.gitconfig" 2>/dev/null || true
-            fi
-
-            if [ "$git_choice" = "2" ]; then
-              # Save workspace and selected keys for future sessions
-              echo "$CURRENT_DIR" >> "$GIT_ALLOWED_FILE"
-              # Also save to config.json
-              if has_jq && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
-                jq --arg ws "$CURRENT_DIR" '.git.allowedWorkspaces += [$ws] | .git.allowedWorkspaces |= unique' "$AI_SANDBOX_CONFIG" > "$AI_SANDBOX_CONFIG.tmp" \
-                  && mv "$AI_SANDBOX_CONFIG.tmp" "$AI_SANDBOX_CONFIG"
-                chmod 600 "$AI_SANDBOX_CONFIG"
-              fi
-              # Save selected keys (one per line for easier parsing)
-              WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-              mkdir -p "$GIT_SHARED_DIR/keys"
-              printf "%s\n" "${SELECTED_SSH_KEYS[@]}" > "$GIT_SHARED_DIR/keys/$WORKSPACE_MD5"
-              echo "✅ Git access enabled and saved for: $CURRENT_DIR"
             else
-              echo "✅ Git access enabled for this session"
+              echo "⚠️  No SSH keys selected. Git access disabled."
             fi
           else
-            echo "⚠️  No SSH keys selected. Git access disabled."
+            echo "⚠️  SSH key selection cancelled. Git access disabled."
           fi
-        else
-          echo "⚠️  SSH key selection cancelled. Git access disabled."
         fi
         ;;
       *)
@@ -1260,6 +2012,11 @@ else
         echo "🔒 Git access disabled (secure mode)"
         ;;
     esac
+
+    # Apply fetch-only restrictions if mode is active
+    if [[ "$GIT_FETCH_ONLY_MODE" == "true" ]]; then
+      apply_git_fetch_only
+    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
   fi
@@ -1342,7 +2099,7 @@ generate_container_name() {
   # Generate random 6-character suffix (hex)
   local random_suffix=$(openssl rand -hex 3)
 
-  echo "${TOOL}-${folder_name}-${random_suffix}"
+  echo "${TOOL:-shell}-${folder_name}-${random_suffix}"
 }
 
 # Container name and TTY allocation
@@ -1422,7 +2179,7 @@ resolve_opencode_password() {
     echo "  3) No password (⚠️  unsecured - localhost only)"
     echo ""
     read -p "Choice [1-3]: " password_choice
-    
+
     case "$password_choice" in
       1)
         local generated_password=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
@@ -1491,11 +2248,11 @@ is_mcp_installed() {
 is_mcp_configured() {
   local mcp_name="$1"
   local config_file="$HOME/.config/opencode/opencode.json"
-  
+
   if [[ ! -f "$config_file" ]]; then
     return 1
   fi
-  
+
   if has_jq; then
     jq -e --arg name "$mcp_name" '.mcp[$name] // empty' "$config_file" &>/dev/null
   else
@@ -1509,7 +2266,7 @@ add_mcp_config() {
   local mcp_command="$2"
   local force="${3:-false}"
   local config_file="$HOME/.config/opencode/opencode.json"
-  
+
   # Check if already configured and warn user
   if [[ "$force" != "true" ]] && is_mcp_configured "$mcp_name"; then
     echo ""
@@ -1522,9 +2279,9 @@ add_mcp_config() {
       return 1
     fi
   fi
-  
+
   mkdir -p "$(dirname "$config_file")"
-  
+
   if [[ ! -f "$config_file" ]]; then
     # Create new config with MCP
     echo "{\"mcp\": {\"$mcp_name\": {\"type\": \"local\", \"command\": $mcp_command}}}" > "$config_file"
@@ -1557,47 +2314,53 @@ configure_opencode_mcp() {
   # Only run for opencode tool in interactive mode
   [[ "$TOOL" != "opencode" ]] && return 0
   [[ ! -t 0 ]] && return 0
-  
+
   local config_file="$HOME/.config/opencode/opencode.json"
-  
+
   # Generate workspace hash for skip tracking
   WORKSPACE_MD5=$(echo "$CURRENT_DIR" | md5sum | cut -c1-8)
-  
+
   # Check if already skipped for this workspace
   if is_mcp_skipped; then
     return 0
   fi
-  
+
   # Detect installed MCP tools (from config.json, set during setup.sh)
   local chrome_installed=false
   local playwright_installed=false
   local chrome_configured=false
   local playwright_configured=false
-  
+
   if is_mcp_installed "chrome-devtools"; then
     chrome_installed=true
     is_mcp_configured "chrome-devtools" && chrome_configured=true
   fi
-  
+
   if is_mcp_installed "playwright"; then
     playwright_installed=true
     is_mcp_configured "playwright" && playwright_configured=true
   fi
-  
+
+  # Get host Chrome path if using playwright-host
+  local PLAYWRIGHT_HOST_CHROME=""
+  if command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]]; then
+    PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
+  fi
+
   # If no MCP tools installed in image, return
   if [[ "$chrome_installed" == "false" && "$playwright_installed" == "false" ]]; then
     return 0
   fi
-  
+
   # If all installed tools are already configured, return silently
   local all_configured=true
   [[ "$chrome_installed" == "true" && "$chrome_configured" == "false" ]] && all_configured=false
   [[ "$playwright_installed" == "true" && "$playwright_configured" == "false" ]] && all_configured=false
-  
+
   if [[ "$all_configured" == "true" ]]; then
     return 0
   fi
-  
+
   # Build lists of configured and unconfigured tools
   local unconfigured=()
   local configured=()
@@ -1605,12 +2368,12 @@ configure_opencode_mcp() {
   [[ "$chrome_installed" == "true" && "$chrome_configured" == "true" ]] && configured+=("chrome-devtools")
   [[ "$playwright_installed" == "true" && "$playwright_configured" == "false" ]] && unconfigured+=("playwright")
   [[ "$playwright_installed" == "true" && "$playwright_configured" == "true" ]] && configured+=("playwright")
-  
+
   # Show prompt
   echo ""
   echo "🔌 MCP Tools Detected"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  
+
   # Show already configured tools
   if [[ ${#configured[@]} -gt 0 ]]; then
     echo "Already configured:"
@@ -1620,13 +2383,17 @@ configure_opencode_mcp() {
           echo "  ✓ Chrome DevTools MCP"
           ;;
         playwright)
-          echo "  ✓ Playwright MCP"
+          if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+            echo "  ✓ Playwright MCP (host Chrome)"
+          else
+            echo "  ✓ Playwright MCP"
+          fi
           ;;
       esac
     done
     echo ""
   fi
-  
+
   # Show unconfigured tools
   if [[ ${#unconfigured[@]} -gt 0 ]]; then
     echo "Not yet configured:"
@@ -1636,13 +2403,17 @@ configure_opencode_mcp() {
           echo "  • Chrome DevTools MCP - browser automation + performance profiling"
           ;;
         playwright)
-          echo "  • Playwright MCP - multi-browser automation"
+          if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+            echo "  • Playwright MCP (host Chrome) - use your installed Chrome browser"
+          else
+            echo "  • Playwright MCP - multi-browser automation"
+          fi
           ;;
       esac
     done
     echo ""
   fi
-  
+
   echo "Configure MCP tools in OpenCode?"
   echo "  1) Yes, configure all detected tools"
   echo "  2) Yes, let me choose which ones"
@@ -1650,28 +2421,42 @@ configure_opencode_mcp() {
   echo "  4) No, don't ask again for this workspace"
   echo ""
   read -p "Choice [1-4]: " mcp_choice
-  
+
   local configured_any=false
-  
+
   case "$mcp_choice" in
     1)
       # Configure all (both unconfigured and offer to reconfigure configured ones)
       local all_tools=()
       [[ "$chrome_installed" == "true" ]] && all_tools+=("chrome-devtools")
       [[ "$playwright_installed" == "true" ]] && all_tools+=("playwright")
-      
+
       for tool in "${all_tools[@]}"; do
         case "$tool" in
           chrome-devtools)
-            if add_mcp_config "chrome-devtools" '["chrome-devtools-mcp", "--headless", "--isolated", "--executablePath", "/opt/chromium"]'; then
-              echo "  ✓ Configured Chrome DevTools MCP"
+            # Skip static entry under host Chrome mode — per-container
+            # chrome-devtools_port_<port> entry is registered at runtime.
+            if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+              echo "  ℹ️  Chrome DevTools MCP entry will be registered per-container at runtime (host Chrome mode)."
               configured_any=true
+            else
+              if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
+                echo "  ✓ Configured Chrome DevTools MCP"
+                configured_any=true
+              fi
             fi
             ;;
           playwright)
-            if add_mcp_config "playwright" '["npx", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]'; then
-              echo "  ✓ Configured Playwright MCP"
+            # Check if using host Chrome via CDP
+            if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+              echo "  ℹ️  Playwright MCP entry will be registered per-container at runtime (host Chrome mode)."
               configured_any=true
+            else
+              # Use container Chromium
+              if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
+                echo "  ✓ Configured Playwright MCP"
+                configured_any=true
+              fi
             fi
             ;;
         esac
@@ -1682,7 +2467,7 @@ configure_opencode_mcp() {
       local all_tools=()
       [[ "$chrome_installed" == "true" ]] && all_tools+=("chrome-devtools")
       [[ "$playwright_installed" == "true" ]] && all_tools+=("playwright")
-      
+
       for tool in "${all_tools[@]}"; do
         local tool_desc=""
         local status_hint=""
@@ -1700,15 +2485,26 @@ configure_opencode_mcp() {
         if [[ "$tool_choice" =~ ^[Yy]$ ]]; then
           case "$tool" in
             chrome-devtools)
-              if add_mcp_config "chrome-devtools" '["chrome-devtools-mcp", "--headless", "--isolated", "--executablePath", "/opt/chromium"]'; then
-                echo "    ✓ Configured"
+              if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+                echo "    ℹ️  Chrome DevTools MCP entry will be registered per-container at runtime (host Chrome mode)."
                 configured_any=true
+              else
+                if add_mcp_config "chrome-devtools" "[\"chrome-devtools-mcp\", \"--headless\", \"--isolated\", \"--executablePath\", \"$CHROMIUM_PATH\", \"--chrome-arg=--no-sandbox\"]"; then
+                  echo "    ✓ Configured"
+                fi
               fi
               ;;
             playwright)
-              if add_mcp_config "playwright" '["npx", "@playwright/mcp@latest", "--headless", "--browser", "chromium"]'; then
-                echo "    ✓ Configured"
+              # Check if using host Chrome via CDP
+              if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+                echo "  ℹ️  Playwright MCP entry will be registered per-container at runtime (host Chrome mode)."
                 configured_any=true
+              else
+                # Use container Chromium
+                if add_mcp_config "playwright" '["playwright-mcp", "--headless", "--browser", "chromium"]'; then
+                  echo "    ✓ Configured"
+                  configured_any=true
+                fi
               fi
               ;;
           esac
@@ -1725,7 +2521,7 @@ configure_opencode_mcp() {
       echo "ℹ️  Skipped."
       ;;
   esac
-  
+
   # Show config file path for easy editing
   echo ""
   if [[ "$configured_any" == "true" ]]; then
@@ -1791,7 +2587,7 @@ check_port_in_use() {
   else
     return 2
   fi
-  
+
   docker ps --format "{{.Ports}}" 2>/dev/null | grep -q ":$port->" && return 0
   return 1
 }
@@ -1845,10 +2641,10 @@ if detect_opencode_web; then
   if [[ -z "$WEB_PORT" ]]; then
     WEB_PORT=4096
   fi
-  
+
   add_port_to_list "$WEB_PORT" "auto-detected"
   echo "🌐 Detected web command. Auto-exposing port $WEB_PORT."
-  
+
   if ! has_hostname_arg; then
     TOOL_ARGS+=("--hostname" "0.0.0.0")
   fi
@@ -1903,7 +2699,7 @@ if [[ -n "$EXPOSE_PORTS_LIST" ]]; then
   done
 
   echo "🔌 Port mappings: $EXPOSE_PORTS_LIST"
-  
+
   if [[ "$WEB_DETECTED" == "true" ]]; then
     echo "🌐 Web UI available at http://localhost:$WEB_PORT"
   fi
@@ -1921,20 +2717,218 @@ if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
   echo "🔧 Debug: PORT_MAPPINGS='$PORT_MAPPINGS'"
   echo "🔧 Debug: WEB_DETECTED='$WEB_DETECTED'"
   echo "🔧 Debug: EXPOSE_PORTS_LIST='$EXPOSE_PORTS_LIST'"
+  echo "🔧 Debug: RG_COMPAT_MOUNT='$RG_COMPAT_MOUNT'"
 fi
+
+is_nano_brain_command() {
+  if [[ "$TOOL" == "nano-brain" ]]; then
+    return 0
+  fi
+
+  if [[ "$TOOL" == "npx" ]]; then
+    for arg in "${TOOL_ARGS[@]}"; do
+      if [[ "$arg" == "nano-brain" ]]; then
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+NANO_BRAIN_AUTOREPAIR_SCRIPT='
+set -e
+ORIG_CMD=("$@")
+REPAIR_PATTERN="(tree-sitter|native binding|Cannot find module.*tree-sitter|compiled against a different Node.js version|Exec format error|invalid ELF header|Native bindings not available)"
+
+echo "🔎 nano-brain preflight: checking runtime cache paths..."
+mkdir -p /home/agent/.npm /home/agent/.cache/node-gyp 2>/dev/null || true
+
+run_with_capture() {
+  local err_file
+  err_file=$(mktemp)
+
+  set +e
+  "${ORIG_CMD[@]}" 2>"$err_file"
+  local exit_code=$?
+  set -e
+
+  if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
+    cat "$err_file" >&2
+    echo "⚠️  Detected nano-brain native module issue."
+    echo "🔧 Running automatic repair (rebuilding native modules for container arch)..."
+    rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
+    npm cache clean --force >/dev/null 2>&1 || true
+    # Root cause: host macOS prebuilds are wrong arch for Linux container.
+    # Fix: delete wrong-arch prebuilds and reinstall to compile from source.
+    local NB_DIR
+    NB_DIR=$(dirname "$(dirname "$(readlink -f "$(which npx)")")")/lib/node_modules/nano-brain 2>/dev/null || true
+    if [[ -z "$NB_DIR" || ! -d "$NB_DIR" ]]; then
+      # npx cache location
+      NB_DIR=$(find /home/agent/.npm/_npx -maxdepth 4 -name "nano-brain" -type d 2>/dev/null | head -1)
+    fi
+    if [[ -n "$NB_DIR" && -d "$NB_DIR/node_modules" ]]; then
+      echo "  📦 Rebuilding tree-sitter in $NB_DIR..."
+      for pkg in tree-sitter-typescript tree-sitter-javascript tree-sitter-python; do
+        local prebuild_dir="$NB_DIR/node_modules/$pkg/prebuilds/linux-arm64"
+        if [[ -d "$prebuild_dir" ]]; then
+          rm -rf "$prebuild_dir"
+        fi
+      done
+      (cd "$NB_DIR" && npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python 2>/dev/null) || true
+    fi
+    echo "🔁 Retrying nano-brain command once..."
+    set +e
+    "${ORIG_CMD[@]}"
+    local retry_code=$?
+    set -e
+    rm -f "$err_file"
+    return $retry_code
+  fi
+
+  if [[ $exit_code -eq 0 ]] && grep -Eqi "(\\[treesitter\\] Native bindings not available|symbol graph disabled|tree-sitter-typescript\\.node|No such file or directory)" "$err_file"; then
+    if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
+      echo "ℹ️  nano-brain: non-fatal tree-sitter warning captured." >&2
+      cat "$err_file" >&2
+    else
+      grep -Eiv "(\\[treesitter\\] Native bindings not available|symbol graph disabled|tree-sitter-typescript\\.node|No such file or directory)" "$err_file" >&2 || true
+    fi
+    rm -f "$err_file"
+    return 0
+  fi
+
+  cat "$err_file" >&2
+  rm -f "$err_file"
+  return $exit_code
+}
+
+run_with_capture
+'
+
+NANO_BRAIN_SHELL_HOOK=$(cat <<'EOF'
+nano_brain_shell_wrapper() {
+  local ORIG_CMD=("$@")
+  local REPAIR_PATTERN="(tree-sitter|native binding|Cannot find module.*tree-sitter|compiled against a different Node.js version|Exec format error|invalid ELF header|Native bindings not available)"
+  local WARN_PATTERN="(\\[treesitter\\] Native bindings not available|symbol graph disabled|tree-sitter-typescript\\.node|No such file or directory)"
+
+  local err_file
+  err_file=$(mktemp)
+
+  set +e
+  "${ORIG_CMD[@]}" 2>"$err_file"
+  local exit_code=$?
+  set -e
+
+  if [[ $exit_code -ne 0 ]] && grep -Eqi "$REPAIR_PATTERN" "$err_file"; then
+    cat "$err_file" >&2
+    echo "⚠️  Detected nano-brain native module issue."
+    echo "🔧 Running automatic repair (rebuilding native modules for container arch)..."
+    rm -rf /home/agent/.npm/_npx /home/agent/.cache/node-gyp 2>/dev/null || true
+    npm cache clean --force >/dev/null 2>&1 || true
+    # Root cause: host macOS prebuilds are wrong arch for Linux container.
+    # Fix: delete wrong-arch prebuilds and reinstall to compile from source.
+    local NB_DIR
+    NB_DIR=$(dirname "$(dirname "$(readlink -f "$(which npx)")")")/lib/node_modules/nano-brain 2>/dev/null || true
+    if [[ -z "$NB_DIR" || ! -d "$NB_DIR" ]]; then
+      NB_DIR=$(find /home/agent/.npm/_npx -maxdepth 4 -name "nano-brain" -type d 2>/dev/null | head -1)
+    fi
+    if [[ -n "$NB_DIR" && -d "$NB_DIR/node_modules" ]]; then
+      echo "  📦 Rebuilding tree-sitter in $NB_DIR..."
+      for pkg in tree-sitter-typescript tree-sitter-javascript tree-sitter-python; do
+        local prebuild_dir="$NB_DIR/node_modules/$pkg/prebuilds/linux-arm64"
+        if [[ -d "$prebuild_dir" ]]; then
+          rm -rf "$prebuild_dir"
+        fi
+      done
+      (cd "$NB_DIR" && npm rebuild tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python 2>/dev/null) || true
+    fi
+    echo "🔁 Retrying nano-brain command once..."
+    "${ORIG_CMD[@]}"
+    local retry_code=$?
+    rm -f "$err_file"
+    return $retry_code
+  fi
+
+  if [[ $exit_code -eq 0 ]] && grep -Eqi "$WARN_PATTERN" "$err_file"; then
+    if [[ "${AI_RUN_DEBUG:-}" == "1" ]]; then
+      echo "ℹ️  nano-brain: non-fatal tree-sitter warning captured." >&2
+      cat "$err_file" >&2
+    else
+      grep -Eiv "$WARN_PATTERN" "$err_file" >&2 || true
+    fi
+    rm -f "$err_file"
+    return 0
+  fi
+
+  cat "$err_file" >&2
+  rm -f "$err_file"
+  return $exit_code
+}
+
+npx() {
+  if [[ "${1:-}" == "nano-brain" ]]; then
+    nano_brain_shell_wrapper command npx "$@"
+    return $?
+  fi
+  command npx "$@"
+}
+
+export -f nano_brain_shell_wrapper npx
+EOF
+)
 
 # Prepare command based on mode
 ENTRYPOINT_OVERRIDE=""
-if [[ "$SHELL_MODE" == "true" ]]; then
-  # Shell mode: override entrypoint to bash and show welcome message
-  ENTRYPOINT_OVERRIDE="--entrypoint bash"
-  DOCKER_COMMAND=(
-    "-c"
-    "echo ''; echo '🚀 AI Tool Container - Interactive Shell'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; echo \"Tool available: ${TOOL}\"; echo 'Run the tool: ${TOOL}'; echo 'Exit container: exit or Ctrl+D'; echo ''; echo \"Additional tools:\"; echo '  - specify (spec-kit): Spec-driven development'; echo '  - uipro (ux-ui-promax): UI/UX design intelligence'; echo '  - openspec: OpenSpec workflow'; echo ''; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; exec bash"
-  )
-else
-  # Direct mode: use image's default entrypoint with arguments
+if [[ -n "$TOOL" && "$SHELL_MODE" != "true" ]]; then
+  # Direct tool execution: override entrypoint to the tool
+  ENTRYPOINT_OVERRIDE="--entrypoint $TOOL"
   DOCKER_COMMAND=("${TOOL_ARGS[@]}")
+elif [[ "$SHELL_MODE" == "true" || -z "$TOOL" ]]; then
+  # Shell mode (explicit --shell or no tool specified)
+  ENTRYPOINT_OVERRIDE="--entrypoint bash"
+  # Build welcome message with installed tools
+  INSTALLED_TOOLS_MSG=""
+  if command -v jq &>/dev/null && [[ -f "$SANDBOX_DIR/config.json" ]]; then
+    INSTALLED_TOOLS_MSG=$(jq -r '.tools.installed // [] | join(", ")' "$SANDBOX_DIR/config.json" 2>/dev/null || echo "")
+  fi
+  if [[ -n "$TOOL" ]]; then
+    # Shell mode with specific tool (ai-run claude --shell)
+    DOCKER_COMMAND=(
+      "-c"
+      "echo ''; echo '🚀 AI Tool Container - Interactive Shell'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; echo \"Tool available: ${TOOL}\"; echo 'Run the tool: ${TOOL}'; echo 'Exit container: exit or Ctrl+D'; echo ''; echo \"Additional tools:\"; echo '  - specify (spec-kit): Spec-driven development'; echo '  - uipro (ux-ui-promax): UI/UX design intelligence'; echo '  - openspec: OpenSpec workflow'; echo ''; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; exec bash"
+    )
+  else
+    # Shell mode without tool (ai-run with no args)
+    DOCKER_COMMAND=(
+      "-c"
+      "echo ''; echo '🚀 AI Sandbox - Interactive Shell'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; echo 'Installed tools: ${INSTALLED_TOOLS_MSG:-unknown}'; echo ''; echo 'Run any tool by name: claude, opencode, gemini, etc.'; echo 'Exit: exit or Ctrl+D'; echo ''; echo 'Enhancement tools: specify, uipro, openspec, rtk'; echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'; echo ''; exec bash"
+    )
+  fi
+else
+  # Fallback: direct mode with image's default entrypoint
+  DOCKER_COMMAND=("${TOOL_ARGS[@]}")
+fi
+
+# Nano-brain targeted preflight + auto-repair wrapper
+if [[ "$SHELL_MODE" == "true" ]] && [[ "$NANO_BRAIN_AUTO_REPAIR" == "true" ]] && [[ "${DOCKER_COMMAND[0]:-}" == "-c" ]]; then
+  # Separate hook from following command with newline so bash parses them
+  # as distinct statements. Without this, the hook's trailing `export -f`
+  # line gets joined with the next `echo` call, producing:
+  #   export -f nano_brain_shell_wrapper npx echo ''; echo '...'
+  # which makes bash try to `export -f echo` (a builtin, not a function)
+  # and `export -f ''` (empty name), emitting two harmless but ugly errors:
+  #   bash: line 68: export: echo: not a function
+  #   bash: line 68: export: : not a function
+  DOCKER_COMMAND[1]="$NANO_BRAIN_SHELL_HOOK"$'\n'"${DOCKER_COMMAND[1]}"
+fi
+
+if [[ "$SHELL_MODE" != "true" ]] && is_nano_brain_command; then
+  if [[ "$NANO_BRAIN_AUTO_REPAIR" == "true" ]]; then
+    ENTRYPOINT_OVERRIDE="--entrypoint bash"
+    DOCKER_COMMAND=("-lc" "$NANO_BRAIN_AUTOREPAIR_SCRIPT" "nano-brain-wrapper" "$TOOL" "${TOOL_ARGS[@]}")
+  else
+    echo "ℹ️  nano-brain auto-repair disabled"
+  fi
 fi
 
 # Detect platform architecture (avoid slow emulation)
@@ -1967,36 +2961,140 @@ fi
 mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
 chmod -R u+w "$HOME_DIR" "$GIT_SHARED_DIR" 2>/dev/null || true
 
-# Selective Cache Isolation (Anonymous Volumes)
-# Use anonymous volumes to "hide" host-poisoned node_modules and caches
-# while keeping configurations and auth data.
-CACHE_MOUNTS=""
-if [[ "$TOOL" == "opencode" ]]; then
-  # Isolate heavy caches and node_modules to prevent Bun/Node conflicts
-  CACHE_MOUNTS="-v /home/agent/.npm -v /home/agent/.cache -v /home/agent/.opencode/node_modules"
+if [[ ! -f "$CACHE_DIR/playwright-browsers/.seeded" ]]; then
+  if docker run --rm "$IMAGE" test -d /opt/playwright-browsers 2>/dev/null; then
+    echo "🔄 Seeding shared Playwright browser cache..."
+    docker run --rm -v "$CACHE_DIR/playwright-browsers":/export "$IMAGE" \
+      cp -a /opt/playwright-browsers/. /export/ 2>/dev/null && \
+      touch "$CACHE_DIR/playwright-browsers/.seeded" && \
+      echo "✅ Playwright browsers cached" || \
+      echo "⚠️  Playwright browser seeding failed (will retry next run)"
+  else
+    touch "$CACHE_DIR/playwright-browsers/.seeded"
+  fi
+fi
+
+# Resolve the latest chromium binary path from shared cache
+# The /opt/chromium symlink inside the image may point to a stale version
+CHROMIUM_PATH="/opt/chromium"
+LATEST_CHROMIUM=$(ls -d "$CACHE_DIR/playwright-browsers"/chromium-*/chrome-linux/chrome 2>/dev/null | sort -V | tail -1)
+if [[ -n "$LATEST_CHROMIUM" ]]; then
+  # Convert host cache path to container path
+  CHROMIUM_PATH="/opt/playwright-browsers/$(echo "$LATEST_CHROMIUM" | grep -oE 'chromium-[^/]+')/chrome-linux/chrome"
 fi
 
 # Detect display configuration (clipboard integration)
 DISPLAY_FLAGS=$(detect_display_config)
 
-docker run $CONTAINER_NAME --rm $TTY_FLAGS \
-  --init \
-  --platform "$PLATFORM" \
-  $ENTRYPOINT_OVERRIDE \
-  $VOLUME_MOUNTS \
-  $CONFIG_MOUNT \
-  $TOOL_CONFIG_MOUNTS \
-  $GIT_MOUNTS \
-  $NETWORK_OPTIONS \
-  $CACHE_MOUNTS \
-  $DISPLAY_FLAGS \
-  $HOST_ACCESS_ARGS \
-  $PORT_MAPPINGS \
-  $OPENCODE_PASSWORD_ENV \
-  -v "$HOME_DIR":/home/agent \
-  -w "$CURRENT_DIR" \
-  --env-file "$ENV_FILE" \
-  -e TERM="$TERM" \
-  -e COLORTERM="$COLORTERM" \
-  $TERMINAL_SIZE \
-  "$IMAGE" "${DOCKER_COMMAND[@]}"
+# ============================================================================
+# OPENCLAW DOCKER-COMPOSE MODE
+# ============================================================================
+if [[ "$TOOL" == "openclaw" ]]; then
+  OPENCLAW_REPO_DIR="$HOME/.ai-sandbox/tools/openclaw/repo"
+
+  if [[ ! -d "$OPENCLAW_REPO_DIR" ]]; then
+    echo "❌ ERROR: OpenClaw repository not found at $OPENCLAW_REPO_DIR"
+    echo "   Run: npx @kokorolx/ai-sandbox-wrapper setup"
+    exit 1
+  fi
+
+  cd "$OPENCLAW_REPO_DIR"
+
+  OPENCLAW_COMPOSE_FILE="$OPENCLAW_REPO_DIR/docker-compose.yml"
+  OPENCLAW_OVERRIDE_FILE="$OPENCLAW_REPO_DIR/docker-compose.override.yml"
+
+  echo "🔄 Generating OpenClaw docker-compose override..."
+
+  cat > "$OPENCLAW_OVERRIDE_FILE" <<EOF
+services:
+  openclaw-gateway:
+    environment:
+      HOME: /home/node
+      OPENCLAW_GATEWAY_TOKEN: \${OPENCLAW_GATEWAY_TOKEN:-}
+    volumes:
+      - $HOME/.openclaw:/home/node/.openclaw
+EOF
+
+  for workspace in "${WORKSPACES[@]}"; do
+    echo "      - $workspace:$workspace" >> "$OPENCLAW_OVERRIDE_FILE"
+  done
+
+  cat >> "$OPENCLAW_OVERRIDE_FILE" <<EOF
+    ports:
+      - "18789:18789"
+      - "18790:18790"
+    working_dir: $CURRENT_DIR
+EOF
+
+  if [[ -n "$NETWORK_OPTIONS" ]]; then
+    echo "    networks:" >> "$OPENCLAW_OVERRIDE_FILE"
+    for net in ${DOCKER_NETWORKS//,/ }; do
+      echo "      - $net" >> "$OPENCLAW_OVERRIDE_FILE"
+    done
+    echo "" >> "$OPENCLAW_OVERRIDE_FILE"
+    echo "networks:" >> "$OPENCLAW_OVERRIDE_FILE"
+    for net in ${DOCKER_NETWORKS//,/ }; do
+      echo "  $net:" >> "$OPENCLAW_OVERRIDE_FILE"
+      echo "    external: true" >> "$OPENCLAW_OVERRIDE_FILE"
+    done
+  fi
+
+  echo "🚀 Starting OpenClaw with docker-compose..."
+  echo "🌐 Gateway: http://localhost:18789"
+  echo "🌐 Bridge: http://localhost:18790"
+  echo ""
+
+  exec docker compose -f "$OPENCLAW_COMPOSE_FILE" -f "$OPENCLAW_OVERRIDE_FILE" \
+    --env-file "$ENV_FILE" \
+    up --remove-orphans
+fi
+
+# Build docker run arguments as an array (handles paths with spaces correctly)
+DOCKER_ARGS=()
+DOCKER_ARGS+=($CONTAINER_NAME --rm $TTY_FLAGS)
+DOCKER_ARGS+=(--init)
+DOCKER_ARGS+=(--platform "$PLATFORM")
+DOCKER_ARGS+=($ENTRYPOINT_OVERRIDE)
+DOCKER_ARGS+=($VOLUME_MOUNTS)
+DOCKER_ARGS+=($CONFIG_MOUNT)
+DOCKER_ARGS+=($TOOL_CONFIG_MOUNTS)
+DOCKER_ARGS+=($RG_COMPAT_MOUNT)
+DOCKER_ARGS+=($GIT_MOUNTS)
+DOCKER_ARGS+=($SSH_AGENT_ENV)
+# Default to ai-sandbox network for service discovery if user didn't specify.
+# Only add --network if creation succeeded; otherwise Docker uses its default bridge.
+if [[ -z "$NETWORK_OPTIONS" ]]; then
+  if ensure_network "ai-sandbox" >/dev/null 2>&1; then
+    DOCKER_ARGS+=(--network ai-sandbox)
+  fi
+fi
+DOCKER_ARGS+=($NETWORK_OPTIONS)
+DOCKER_ARGS+=($DISPLAY_FLAGS)
+DOCKER_ARGS+=($HOST_ACCESS_ARGS)
+DOCKER_ARGS+=($PORT_MAPPINGS)
+DOCKER_ARGS+=($OPENCODE_PASSWORD_ENV)
+DOCKER_ARGS+=(-v "$HOME_DIR":/home/agent)
+# Auto-mount open-design data volume read-only so agents can read generated artifacts
+if docker volume inspect ai-open-design-data >/dev/null 2>&1; then
+  DOCKER_ARGS+=(-v "ai-open-design-data:/workspace/.od:ro")
+fi
+DOCKER_ARGS+=($SHARED_CACHE_MOUNTS)
+DOCKER_ARGS+=($NANO_BRAIN_MOUNT)
+DOCKER_ARGS+=(-w "$CURRENT_DIR")
+DOCKER_ARGS+=(--env-file "$ENV_FILE")
+DOCKER_ARGS+=(-e TERM="$TERM")
+DOCKER_ARGS+=(-e COLORTERM="$COLORTERM")
+if [[ -n "${PLAYWRIGHT_MCP_NAME:-}" ]]; then
+  DOCKER_ARGS+=(-e "PLAYWRIGHT_MCP_NAME=$PLAYWRIGHT_MCP_NAME")
+  DOCKER_ARGS+=(-e "PLAYWRIGHT_PORT=$HOST_CHROME_CDP_PORT")
+fi
+if [[ -n "${CHROME_DEVTOOLS_MCP_NAME:-}" ]]; then
+  DOCKER_ARGS+=(-e "CHROME_DEVTOOLS_MCP_NAME=$CHROME_DEVTOOLS_MCP_NAME")
+fi
+DOCKER_ARGS+=($TERMINAL_SIZE)
+
+DOCKER_ARGS+=("$IMAGE")
+DOCKER_ARGS+=("${DOCKER_COMMAND[@]}")
+
+# Execute docker run with proper argument handling
+docker run "${DOCKER_ARGS[@]}"

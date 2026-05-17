@@ -4,7 +4,7 @@
 
 Protect your SSH keys, API tokens, and system files while using AI tools that need filesystem access.
 
-*Last updated: February 9, 2026*
+*Last updated: February 25, 2026*
 
 ---
 
@@ -33,21 +33,24 @@ Protect your SSH keys, API tokens, and system files while using AI tools that ne
 
 ## ✨ What's New
 
-### v2.3.0-beta: Web Mode & Port Exposure
+### v2.7.0: Git Fetch-Only Mode & Bundled Skills
 
-- **Web Auto-Detection**: `opencode web` automatically exposes port 4096 and injects `--hostname 0.0.0.0`
-- **`--expose` Flag**: New way to expose ports (replaces deprecated `PORT` env var)
-- **Port Conflict Detection**: Fails fast if port is already in use
+- **Git Fetch-Only**: Allow git fetch/pull but block push — perfect for AI agents that should read but not write
+- **Bundled Skills**: RTK token optimizer skills auto-installed for OpenCode users
+- **SSH Config Fix**: Resolved crash during git credential setup
 
 ```bash
-# Web mode - automatic port exposure
-opencode web
+# Fetch-only mode (no push allowed)
+opencode --git-fetch
 
-# Custom port
-opencode web --port 8080
+# Or select from interactive menu:
+#   4) Fetch only - allow once (no push, this session)
+#   5) Fetch only - always for this workspace (no push)
 
-# Expose additional ports
-opencode --expose 3000,5555 web
+# Manage via CLI
+npx @kokorolx/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
+npx @kokorolx/ai-sandbox-wrapper git full ~/projects/myrepo
+npx @kokorolx/ai-sandbox-wrapper git status
 ```
 
 ---
@@ -172,8 +175,45 @@ Git credentials are **not** shared by default. When you run a tool, you'll be pr
 ```
 🔐 Git Access Control
   1) Yes, allow once
-  2) Yes, always allow for this workspace  
+  2) Yes, always allow for this workspace
   3) No, keep Git disabled (secure default)
+  4) Fetch only - allow once (no push, this session)
+  5) Fetch only - always for this workspace (no push)
+```
+
+**Fetch-only mode** allows `git fetch`, `git pull`, `git clone` but blocks `git push`. Uses git's `pushInsteadOf` config — no network restrictions needed.
+
+```bash
+# Force fetch-only via flag
+opencode --git-fetch
+
+# Manage via CLI
+npx @kokorolx/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
+npx @kokorolx/ai-sandbox-wrapper git full ~/projects/myrepo
+```
+
+### Nano-brain Auto-Repair
+
+When running nano-brain inside the sandbox, `ai-run` performs a targeted preflight and automatic retry for common native-module failures (for example tree-sitter binding issues).
+
+It also suppresses known **non-fatal** tree-sitter symbol-graph warnings when the command succeeds, so normal query output stays clean. To see suppressed diagnostics, run with debug mode (`AI_RUN_DEBUG=1`).
+
+This behavior applies to both:
+- direct mode (`ai-run npx nano-brain ...`)
+- interactive shell mode (`ai-run`, then run `npx nano-brain ...` inside the container shell)
+
+```bash
+# Auto-repair enabled by default
+ai-run npx nano-brain status
+
+# Disable per-command
+ai-run npx nano-brain status --no-nano-brain-auto-repair
+
+# Disable via environment variable
+AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
+
+# Show suppressed non-fatal warning details
+AI_RUN_DEBUG=1 ai-run npx nano-brain query "hello"
 ```
 
 ### Clipboard
@@ -233,6 +273,17 @@ After installation, configure your MCP client (e.g., OpenCode) to use them:
 
 > **Note:** The `--no-sandbox` flags are required when running in Docker containers. This is safe because the container itself provides isolation.
 
+### Bundled Skills (OpenCode)
+
+OpenCode containers auto-install these skills on first run (existing skills are never overwritten):
+
+| Skill | Description |
+|-------|-------------|
+| `rtk` | Command reference for RTK token optimizer (60-90% token savings) |
+| `rtk-setup` | Persistent RTK enforcement — updates AGENTS.md and propagates to subagents |
+
+Skills are copied to `~/.config/opencode/skills/` and available immediately.
+
 ---
 
 ## 📁 Directory Structure
@@ -290,6 +341,13 @@ opencode -e 3000,4000         # Multiple ports
 # Network
 opencode -n mynetwork         # Join Docker network
 
+# Git fetch-only
+opencode --git-fetch            # Fetch only (no push)
+
+# Nano-brain
+ai-run npx nano-brain status                      # With auto-repair
+AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
+
 # Management
 npx @kokorolx/ai-sandbox-wrapper workspace list
 npx @kokorolx/ai-sandbox-wrapper clean
@@ -306,6 +364,7 @@ npx @kokorolx/ai-sandbox-wrapper clean
 | Port already in use | Stop the process or use different port |
 | Docker not found | Install and start Docker Desktop |
 | Clipboard not working | Use OSC52-compatible terminal. See [CLIPBOARD_SUPPORT.md](CLIPBOARD_SUPPORT.md) |
+| nano-brain native binding/tree-sitter error | Fatal errors auto-repair and retry once by default; known non-fatal symbol-graph warnings are suppressed unless `AI_RUN_DEBUG=1` |
 
 ---
 

@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# Codex CLI installer: OpenAI's terminal coding agent
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/codex && \
+    cd /usr/local/lib/codex && \
+    bun init -y && \
+    bun add @openai/codex && \
+    ln -s /usr/local/lib/codex/node_modules/.bin/codex /usr/local/bin/codex
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="codex"
 
 echo "Installing $TOOL (OpenAI Codex CLI)..."

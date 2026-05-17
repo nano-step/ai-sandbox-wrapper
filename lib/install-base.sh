@@ -5,6 +5,7 @@ set -e
 mkdir -p "dockerfiles/base"
 
 ADDITIONAL_TOOLS_INSTALL=""
+DOCKERFILE_BUILD_STAGES=""
 
 if [[ "${INSTALL_SPEC_KIT:-0}" -eq 1 ]]; then
   echo "📦 spec-kit will be installed in base image"
@@ -37,6 +38,78 @@ if [[ "${INSTALL_OPENSPEC:-0}" -eq 1 ]]; then
     chmod -R 755 /usr/local/lib/openspec && \
     chmod +x /usr/local/bin/openspec
 '
+fi
+
+if [[ "${INSTALL_RTK:-0}" -eq 1 ]]; then
+  echo "📦 RTK (Rust Token Killer) will be installed in base image (multi-stage build)"
+  DOCKERFILE_BUILD_STAGES+='# Build RTK from source (multi-stage: only binary is kept, Rust toolchain discarded)
+FROM rust:bookworm AS rtk-builder
+RUN cargo install --git https://github.com/rtk-ai/rtk --locked
+'
+  ADDITIONAL_TOOLS_INSTALL+='# Install RTK - token optimizer for AI coding agents (built from source)
+COPY --from=rtk-builder /usr/local/cargo/bin/rtk /usr/local/bin/rtk
+'
+  # Copy RTK OpenCode skills into build context so they can be COPY'd into the image
+  SCRIPT_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  RTK_SKILLS_SRC="${SCRIPT_BASE_DIR}/../skills"
+  if [[ -d "$RTK_SKILLS_SRC/rtk" && -d "$RTK_SKILLS_SRC/rtk-setup" ]]; then
+    mkdir -p "dockerfiles/base/skills/rtk" "dockerfiles/base/skills/rtk-setup"
+    cp "$RTK_SKILLS_SRC/rtk/SKILL.md" "dockerfiles/base/skills/rtk/SKILL.md"
+    cp "$RTK_SKILLS_SRC/rtk-setup/SKILL.md" "dockerfiles/base/skills/rtk-setup/SKILL.md"
+    ADDITIONAL_TOOLS_INSTALL+='# Install RTK OpenCode skills (auto-discovered by OpenCode agents)
+RUN mkdir -p /home/agent/.config/opencode/skills/rtk /home/agent/.config/opencode/skills/rtk-setup
+COPY skills/rtk/SKILL.md /home/agent/.config/opencode/skills/rtk/SKILL.md
+COPY skills/rtk-setup/SKILL.md /home/agent/.config/opencode/skills/rtk-setup/SKILL.md
+'
+    echo "  ✅ RTK OpenCode skills will be copied into container"
+  else
+    echo "  ⚠️  RTK skills not found at $RTK_SKILLS_SRC — skipping skill installation"
+  fi
+fi
+
+if [[ "${INSTALL_PUP:-0}" -eq 1 ]]; then
+  echo "📦 Pup (Datadog CLI) will be installed in base image (multi-stage build)"
+  DOCKERFILE_BUILD_STAGES+='# Build Pup from source (multi-stage: only binary is kept, Rust toolchain discarded)
+FROM rust:bookworm AS pup-builder
+RUN cargo install --git https://github.com/DataDog/pup --locked
+'
+  ADDITIONAL_TOOLS_INSTALL+='# Install Pup - Datadog CLI for AI agents (built from source)
+COPY --from=pup-builder /usr/local/cargo/bin/pup /usr/local/bin/pup
+'
+  # Copy Pup OpenCode skill into build context so it can be COPY'd into the image
+  SCRIPT_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PUP_SKILLS_SRC="${SCRIPT_BASE_DIR}/../skills"
+  if [[ -d "$PUP_SKILLS_SRC/dd-pup" ]]; then
+    mkdir -p "dockerfiles/base/skills/dd-pup"
+    cp "$PUP_SKILLS_SRC/dd-pup/SKILL.md" "dockerfiles/base/skills/dd-pup/SKILL.md"
+    ADDITIONAL_TOOLS_INSTALL+='# Install Pup OpenCode skill (auto-discovered by OpenCode agents)
+RUN mkdir -p /home/agent/.config/opencode/skills/dd-pup
+COPY skills/dd-pup/SKILL.md /home/agent/.config/opencode/skills/dd-pup/SKILL.md
+'
+    echo "  ✅ Pup OpenCode skill will be copied into container"
+  else
+    echo "  ⚠️  Pup skill not found at $PUP_SKILLS_SRC/dd-pup — skipping skill installation"
+  fi
+fi
+
+if [[ "${INSTALL_OD_HELPERS:-1}" -eq 1 ]]; then
+  echo "📦 open-design helper scripts (od-status, od-health) will be installed in base image"
+  # Copy helper scripts into build context so they can be COPY'd into the image
+  SCRIPT_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  OD_HELPERS_SRC="${SCRIPT_BASE_DIR}/../scripts"
+  if [[ -f "$OD_HELPERS_SRC/od-status" && -f "$OD_HELPERS_SRC/od-health" ]]; then
+    mkdir -p "dockerfiles/base/scripts"
+    cp "$OD_HELPERS_SRC/od-status" "dockerfiles/base/scripts/od-status"
+    cp "$OD_HELPERS_SRC/od-health" "dockerfiles/base/scripts/od-health"
+    ADDITIONAL_TOOLS_INSTALL+='# Install open-design helper scripts (od-status, od-health) for agent containers
+COPY scripts/od-status /usr/local/bin/od-status
+COPY scripts/od-health /usr/local/bin/od-health
+RUN chmod +x /usr/local/bin/od-status /usr/local/bin/od-health
+'
+    echo "  ✅ open-design helpers will be copied into container"
+  else
+    echo "  ⚠️  open-design helpers not found at $OD_HELPERS_SRC — skipping"
+  fi
 fi
 
 if [[ "${INSTALL_PLAYWRIGHT:-0}" -eq 1 ]]; then
@@ -100,7 +173,7 @@ ENV PATH=$RBENV_ROOT/bin:$RBENV_ROOT/shims:$PATH
 
 RUN rbenv install 3.3.0 && rbenv global 3.3.0 && rbenv rehash
 
-RUN gem install rails -v 8.0.2 && gem install bundler && rbenv rehash
+RUN gem install rails -v 8.0.2 && gem install bundler solargraph && rbenv rehash
 '
 fi
 
@@ -142,13 +215,25 @@ if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_M
     wget \
     && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
-RUN mkdir -p /opt/playwright-browsers && \
+'
+  
+  # Only install Chromium if not using host Chrome
+  if [[ "${INSTALL_PLAYWRIGHT_HOST:-0}" -eq 1 ]]; then
+    echo "  📦 Using host Chrome - skipping Chromium installation"
+    ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /opt/playwright-browsers && \
+    npm install -g @playwright/mcp@latest && \
+    touch /opt/.mcp-playwright-installed
+'
+  else
+    echo "  📦 Installing Chromium browser for MCP tools"
+    ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /opt/playwright-browsers && \
     npm install -g @playwright/mcp@latest && \
     npx playwright-core install --no-shell chromium && \
     npx playwright-core install-deps chromium && \
     chmod -R 777 /opt/playwright-browsers && \
-    ln -sf $(ls -d /opt/playwright-browsers/chromium-*/chrome-linux/chrome | head -1) /opt/chromium
+    ln -sf $(ls -d /opt/playwright-browsers/chromium-*/chrome-linux/chrome | sort -V | tail -1) /opt/chromium
 '
+  fi
 fi
 
 if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]]; then
@@ -166,6 +251,7 @@ if [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
 fi
 
 cat > "dockerfiles/base/Dockerfile" <<EOF
+${DOCKERFILE_BUILD_STAGES}
 FROM node:22-bookworm-slim
 
 ARG AGENT_UID=1001
@@ -188,9 +274,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xclip \
     wl-clipboard \
     ripgrep \
+    tmux \
+    vim-nox \
+    fd-find \
+    sqlite3 \
+    poppler-utils \
+    qpdf \
+    tesseract-ocr \
     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
     && rm -rf /var/lib/apt/lists/* \
     && pipx ensurepath
+
+# Install Python PDF processing tools for PDF skill
+RUN pip3 install --no-cache-dir --break-system-packages pypdf pdfplumber reportlab pytesseract pdf2image
 
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -199,11 +295,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Install bun (used by most AI tool install scripts)
+RUN npm install -g bun
+
 # Install pnpm globally using npm (not bun, for stability)
 RUN npm install -g pnpm
 
 # Install TypeScript and LSP tools using npm
-RUN npm install -g typescript typescript-language-server
+RUN npm install -g typescript typescript-language-server pyright vscode-langservers-extracted
 
 # Verify installations
 RUN node --version && npm --version && pnpm --version && tsc --version
@@ -222,10 +321,15 @@ USER agent
 ENV HOME=/home/agent
 EOF
 
+# GENERATE_ONLY mode: write Dockerfile but don't build
+if [[ "${GENERATE_ONLY:-0}" -eq 1 ]]; then
+  echo "✅ Base Dockerfile generated at dockerfiles/base/Dockerfile"
+  exit 0
+fi
+
 echo "Building base Docker image..."
 HOST_UID=$(id -u)
 docker build ${DOCKER_NO_CACHE:+--no-cache} \
   --build-arg AGENT_UID="${HOST_UID}" \
   -t "ai-base:latest" "dockerfiles/base"
 echo "✅ Base image built (ai-base:latest)"
-

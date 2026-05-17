@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 set -e
 
-# Kilo Code installer: Multi-model AI coding agent
-# Note: Uses npm instead of bun due to cheerio dependency resolution issue
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN npm install -g @kilocode/cli
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="kilo"
 
 echo "Installing $TOOL (Kilo Code CLI)..."

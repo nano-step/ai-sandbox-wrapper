@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-# Gemini CLI installer: Google's AI coding agent
+dockerfile_snippet() {
+  cat <<'SNIPPET'
+USER root
+RUN mkdir -p /usr/local/lib/gemini && \
+    cd /usr/local/lib/gemini && \
+    bun init -y && \
+    bun add @google/gemini-cli && \
+    ln -s /usr/local/lib/gemini/node_modules/.bin/gemini /usr/local/bin/gemini
+USER agent
+SNIPPET
+}
+
+if [[ "${SNIPPET_MODE:-}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 TOOL="gemini"
 
 echo "Installing $TOOL (Google Gemini CLI)..."
