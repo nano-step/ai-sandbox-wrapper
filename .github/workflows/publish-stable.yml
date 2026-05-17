@@ -33,7 +33,7 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - run: npm ci
+      - run: npm install --ignore-scripts
 
       - name: Read version
         id: version
