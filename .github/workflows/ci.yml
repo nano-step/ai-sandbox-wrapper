@@ -73,28 +73,6 @@ jobs:
         run: docker images | grep "ai-${{ matrix.tool.name }}"
 
   lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: ShellCheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: './lib'
-          severity: warning
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check for hardcoded secrets
-        run: |
-          # Check for common secret patterns
-          if grep -rE "(API_KEY|SECRET|PASSWORD|TOKEN)\s*=\s*['\"][^'\"]+['\"]" . --include="*.sh"; then
-            echo "⚠️ Potential hardcoded secrets found"
-            exit 1
-          fi
-          echo "✅ No hardcoded secrets found"
+    uses: kokorolx/shared-workflows/.github/workflows/lint.yml@v1
+    with:
+      shellcheck-dirs: "lib"
