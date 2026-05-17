@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.4.3] - 2026-05-17
 
+### Fixed
+- fix(ci): resolve lint, aider build, opencode port, and open-design port publish
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@3.4.3`
+
+## [3.4.3] - 2026-05-17
+
 ### Added
 - feat: add open-design to setup tool selection with auto-start prompt in ai-run
 - feat(open-design): integrate open-design daemon as service-type tool (#12)
