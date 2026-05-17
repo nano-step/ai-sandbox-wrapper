@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.1] - 2026-05-17
+
+### ⚠ Breaking Changes
+- and uses git trailers for BREAKING CHANGE footer.
+
+### Fixed
+- fix(ci): scope breaking-change detection to subject line only
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@4.0.1`
+
 ## [4.0.0] - 2026-05-17
 
 ### ⚠ Breaking Changes
