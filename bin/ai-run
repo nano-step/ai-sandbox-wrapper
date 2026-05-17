@@ -311,10 +311,11 @@ HLP
       --restart unless-stopped
       -v "$OD_VOLUME:/app/.od"
       --env-file "$OD_ENV_FILE"
+      -p "127.0.0.1:${host_port}:7456"
     )
 
     if [[ "$expose" == "true" ]]; then
-      run_args+=(-p "${host_port}:7456")
+      echo "ℹ️  Port ${host_port} already published by default (127.0.0.1:${host_port}:7456)"
     fi
 
     run_args+=("$OD_IMAGE")
@@ -322,11 +323,7 @@ HLP
     echo "🔄 Starting $OD_CONTAINER_NAME..."
     docker "${run_args[@]}" >/dev/null
     echo "✅ $OD_CONTAINER_NAME running on network '$OD_NETWORK'"
-    if [[ "$expose" == "true" ]]; then
-      echo "   Published to host: http://localhost:${host_port}"
-    else
-      echo "   Internal-only: reachable from sandbox containers as http://ai-open-design:7456"
-    fi
+    echo "   Published to host: http://localhost:${host_port}"
   }
 
   od_stop() {

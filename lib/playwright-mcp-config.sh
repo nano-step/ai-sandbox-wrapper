@@ -189,6 +189,7 @@ pmcp::with_lock() {
     sleep 0.1
     waited=$((waited + 1))
   done
+  # shellcheck disable=SC2064  # intentional: capture $mutex value at trap definition time
   trap "rmdir '$mutex' 2>/dev/null || true" EXIT
   "$@"
   local rc=$?

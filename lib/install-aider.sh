@@ -3,8 +3,9 @@ set -e
 
 dockerfile_snippet() {
   cat <<'SNIPPET'
+USER root
+RUN UV_TOOL_BIN_DIR=/usr/local/bin uv tool install aider-chat
 USER agent
-RUN python3 -m pip install --break-system-packages aider-install && aider-install
 SNIPPET
 }
 
@@ -24,9 +25,9 @@ mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 # Create Dockerfile (extends base image which has Python)
 cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
 FROM ai-base:latest
+USER root
+RUN UV_TOOL_BIN_DIR=/usr/local/bin uv tool install aider-chat
 USER agent
-# Install aider via aider-install
-RUN python3 -m pip install --break-system-packages aider-install && aider-install
 ENTRYPOINT ["aider"]
 EOF
 
