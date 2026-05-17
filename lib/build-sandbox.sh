@@ -67,6 +67,10 @@ if [[ -d "dockerfiles/base/skills" ]]; then
   cp -r "dockerfiles/base/skills" "$SANDBOX_DIR/"
 fi
 
+if [[ -d "dockerfiles/base/scripts" ]]; then
+  cp -r "dockerfiles/base/scripts" "$SANDBOX_DIR/"
+fi
+
 echo "✅ Dockerfile generated at $SANDBOX_DIR/Dockerfile"
 
 echo "🔨 Building ai-sandbox:latest..."
