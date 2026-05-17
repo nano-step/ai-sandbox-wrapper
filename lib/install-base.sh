@@ -179,10 +179,7 @@ fi
 
 # MCP Tools for AI agent browser automation
 # Both tools share Playwright's Chromium (native ARM64/x86_64, avoids Puppeteer arch issues)
-MCP_BROWSER_INSTALLED=false
-
 if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
-  MCP_BROWSER_INSTALLED=true
   echo "📦 Installing shared Chromium browser for MCP tools"
   ADDITIONAL_TOOLS_INSTALL+='RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \

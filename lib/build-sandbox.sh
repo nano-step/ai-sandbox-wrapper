@@ -53,6 +53,7 @@ BASE_PREAMBLE=$(echo "$BASE_CONTENT" | sed '/^USER agent$/,$d')
     fi
     
     echo "# === $tool ===" 
+    # shellcheck source=/dev/null
     SNIPPET_MODE=1 source "$INSTALL_SCRIPT"
     dockerfile_snippet
     echo ""
