@@ -11,6 +11,20 @@ All notable changes to this project will be documented in this file.
 - fix(ci): fix shellcheck SC2164 and opencode install retry
 - fix(ci): resolve lint, aider build, opencode port, and open-design port publish
 
+### Other
+- chore(harness): install engineering harness from nano-step/harness-experimental
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@3.4.3`
+
+## [3.4.3] - 2026-05-17
+
+### Fixed
+- fix(opencode): use ENV HOME=/root in Dockerfile to fix installer path
+- fix(opencode): force HOME=/root in installer so binary lands at /root/.opencode
+- fix(lint): fix SC2034 unused var and SC1090 dynamic source
+- fix(ci): fix shellcheck SC2164 and opencode install retry
+- fix(ci): resolve lint, aider build, opencode port, and open-design port publish
+
 **Install:** `npm install @kokorolx/ai-sandbox-wrapper@3.4.3`
 
 ## [3.4.3] - 2026-05-17
