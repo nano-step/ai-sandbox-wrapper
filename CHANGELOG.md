@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## [3.4.3] - 2026-05-17
 
 ### Fixed
+- fix(ci): fix shellcheck SC2164 and opencode install retry
+- fix(ci): resolve lint, aider build, opencode port, and open-design port publish
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@3.4.3`
+
+## [3.4.3] - 2026-05-17
+
+### Fixed
 - fix(ci): resolve lint, aider build, opencode port, and open-design port publish
 
 **Install:** `npm install @kokorolx/ai-sandbox-wrapper@3.4.3`
