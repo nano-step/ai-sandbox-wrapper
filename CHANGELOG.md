@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.3] - 2026-05-17
+
+### Added
+- feat: add open-design to setup tool selection with auto-start prompt in ai-run
+- feat(open-design): integrate open-design daemon as service-type tool (#12)
+- feat: add Datadog Pup CLI as bundled skill + prompt before opening host Chrome
+- feat(setup): auto-detect host browser path for Chrome CDP mode
+- feat: add rebuild command and fix INSTALL_* env var override in setup.sh
+- feat: chrome-devtools-mcp can also control host Chrome
+- feat(ai-run): pass PLAYWRIGHT_MCP_NAME and PLAYWRIGHT_PORT into container
+- feat(ai-run): use locked sweep+append for per-container playwright MCP
+- feat(playwright-mcp): sweep dead entries and append new under flock
+- feat(playwright-mcp): add CDP probe function
+- feat(playwright-mcp): add helper library with name sanitization
+- feat: upgrade vim-tiny to vim-nox in all container images
+- feat: add vim-tiny to base image for in-container editing
+- feat: remove CCS and Agent Teams from Claude image
+- feat: add nano-brain auto-repair preflight workflow
+
+### Fixed
+- fix(ci): replace npm ci with npm install (no lockfile in project)
+- fix(ci): skip open-design in sandbox verification (separate container)
+- fix: copy scripts/ dir to sandbox build context for od-status/od-health
+- fix(ai-run): separate NANO_BRAIN_SHELL_HOOK from DOCKER_COMMAND with newline
+- fix: rename --no-cache to --fresh for rebuild command to avoid npx flag conflict
+- fix: only register host-Chrome MCP entries for installed binaries
+- fix(ai-run): resolve symlink chain when computing SCRIPT_DIR
+- fix: update playwright mcp, use host chrome
+- fix: tree-sitter auto-repair rebuilds native modules for container arch
+- fix: nano-brain hybrid mount — ro parent with rw logs/ and memory/ overlays
+- fix: arrow key navigation crash in interactive menus due to set -e
+- fix: chrome-devtools-mcp --no-sandbox and chromium symlink resolution
+- fix: nano-brain read-only mount, rg compat docs, ccs symlink manager
+- fix: fallback to system rg when bundled binary is Mach-O
+
+### Changed
+- refactor(playwright-mcp): use short key name playwright_port_<port>
+- refactor(ai-run): skip static playwright MCP entry when host Chrome mode active
+
+### Documentation
+- docs(AGENTS): document PLAYWRIGHT_MCP_NAME env var for browser automation
+- docs: implementation plan for multi-container playwright MCP
+- docs: design for multi-container playwright MCP via host Chrome
+
+### Other
+- chore(release): 3.3.0
+- chore(release): 3.3.0-beta.2
+- chore(pkg): use object form for bin to make CLI command name explicit
+- chore(release): 3.3.0-beta.0
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@3.4.3`
+
 ## [3.4.3] - 2026-05-11
 
 ### Fixed
