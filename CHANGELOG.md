@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.2] - 2026-05-17
+
+### Fixed
+- fix(open-design): publish port 7456 in auto-start docker run
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@4.0.2`
+
 ## [4.0.1] - 2026-05-17
 
 ### ⚠ Breaking Changes
