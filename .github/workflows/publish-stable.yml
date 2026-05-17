@@ -81,9 +81,12 @@ jobs:
 
           BUMP="patch"
 
-          # Check for breaking change → major
-          if git log $RANGE --pretty=format:"%s %b" --no-merges \
-              | grep -qE '(BREAKING CHANGE|^feat!|^fix!|^refactor!)'; then
+          # Check for breaking change → major (subject line only, not body)
+          if git log $RANGE --pretty=format:"%s" --no-merges \
+              | grep -qE '^(feat|fix|refactor|chore)\!(\(.+\))?:'; then
+            BUMP="major"
+          elif git log $RANGE --pretty=format:"%(trailers:key=BREAKING CHANGE)" --no-merges \
+              | grep -q "BREAKING CHANGE"; then
             BUMP="major"
           # Check for feat → minor (only if not already major)
           elif git log $RANGE --pretty=format:"%s" --no-merges \
