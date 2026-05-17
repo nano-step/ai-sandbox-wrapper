@@ -26,11 +26,11 @@ if [[ ! -d "$OPENCLAW_REPO_DIR/.git" ]]; then
   git clone https://github.com/openclaw/openclaw.git "$OPENCLAW_REPO_DIR"
 else
   echo "📦 OpenClaw repository already exists, pulling latest..."
-  cd "$OPENCLAW_REPO_DIR"
+  cd "$OPENCLAW_REPO_DIR" || exit 1
   git pull origin main || git pull origin master || true
 fi
 
-cd "$OPENCLAW_REPO_DIR"
+cd "$OPENCLAW_REPO_DIR" || exit 1
 
 # Build OpenClaw Docker image using their docker-compose
 echo "🔨 Building OpenClaw Docker image..."

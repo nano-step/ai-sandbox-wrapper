@@ -4,7 +4,7 @@ set -e
 dockerfile_snippet() {
   cat <<'SNIPPET'
 USER root
-RUN curl -fsSL https://opencode.ai/install | bash && \
+RUN curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash && \
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /root/.opencode
 SNIPPET
@@ -32,7 +32,7 @@ if [[ -n "$OPENCODE_VERSION" ]]; then
 FROM ai-base:latest
 
 USER root
-RUN curl -fsSL https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION && \\
+RUN curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION && \\
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \\
     rm -rf /root/.opencode
 
@@ -44,7 +44,7 @@ else
 FROM ai-base:latest
 
 USER root
-RUN curl -fsSL https://opencode.ai/install | bash && \
+RUN curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash && \
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /root/.opencode
 
