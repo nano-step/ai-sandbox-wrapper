@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+  cat << 'HELP'
+od-status: Show open-design daemon connection status
+
+Usage: od-status [OPTIONS]
+
+Environment variables:
+  OD_DAEMON_URL    Daemon URL (default: http://ai-open-design:7456)
+  OD_API_TOKEN     Bearer token for authentication (optional)
+
+Options:
+  -h, --help       Show this message
+HELP
+  exit 0
+fi
+
+DAEMON_URL="${OD_DAEMON_URL:-(unset)}"
+TOKEN="${OD_API_TOKEN:-}"
+
+echo "Daemon URL: ${DAEMON_URL}"
+
+if [[ -n "$TOKEN" ]]; then
+  echo "API token : set (***${TOKEN: -4})"
+else
+  echo "API token : (unset)"
+fi
+
+HEALTH_OUTPUT=$(od-health 2>&1) || {
+  rc=$?
+  echo "Health    : FAIL (${HEALTH_OUTPUT})"
+  exit $rc
+}
+
+echo "Health    : OK"

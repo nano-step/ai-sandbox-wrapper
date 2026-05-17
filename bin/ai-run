@@ -141,6 +141,293 @@ else
   TOOL=""
 fi
 
+# ────────────────────────────────────────────────────────────────
+# OPEN-DESIGN SERVICE-TYPE TOOL DISPATCHER
+# Unlike ephemeral CLI tools, open-design is a long-running daemon.
+# Routes init/start/stop/restart/status/logs subcommands and exits.
+# ────────────────────────────────────────────────────────────────
+if [[ "$TOOL" == "open-design" ]]; then
+  OD_CONTAINER_NAME="ai-open-design"
+  OD_IMAGE="ai-open-design:latest"
+  OD_NETWORK="ai-sandbox"
+  OD_VOLUME="ai-open-design-data"
+  OD_ENV_FILE="$HOME/.ai-sandbox/env"
+  OD_DEFAULT_URL="http://ai-open-design:7456"
+
+  od_print_help() {
+    cat <<HLP
+Usage: ai-run open-design <subcommand> [options]
+
+Subcommands:
+  init [--force]              One-time setup: generate API token, create network/volume
+  start [--expose] [--port N] Boot daemon (detached). --expose publishes port to host
+  stop                        Stop daemon (preserves container for restart)
+  restart [start-flags...]    Stop then start
+  status                      Show daemon state, network, port, token, health
+  logs [-f|--follow]          Show daemon logs (-f to follow)
+  --help, -h                  Show this help
+
+Examples:
+  ai-run open-design init
+  ai-run open-design start
+  ai-run open-design start --expose            # publishes 7456 to host
+  ai-run open-design start --expose --port 17456
+  ai-run open-design status
+HLP
+  }
+
+  od_env_has_token() {
+    [[ -f "$OD_ENV_FILE" ]] && grep -q "^OD_API_TOKEN=" "$OD_ENV_FILE"
+  }
+
+  od_read_token() {
+    [[ -f "$OD_ENV_FILE" ]] && grep "^OD_API_TOKEN=" "$OD_ENV_FILE" | head -1 | cut -d= -f2-
+  }
+
+  od_init() {
+    local force=false
+    if [[ "${1:-}" == "--force" ]]; then
+      force=true
+    fi
+
+    mkdir -p "$(dirname "$OD_ENV_FILE")"
+    touch "$OD_ENV_FILE"
+    chmod 600 "$OD_ENV_FILE"
+
+    if od_env_has_token && [[ "$force" != "true" ]]; then
+      echo "ℹ️  OD_API_TOKEN already set in $OD_ENV_FILE — nothing to do"
+      echo "    Use 'ai-run open-design init --force' to regenerate (will invalidate running sessions)"
+    else
+      if [[ "$force" == "true" ]] && od_env_has_token; then
+        printf "⚠️  This will replace the existing OD_API_TOKEN. Continue? [y/N] "
+        read -r confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+          echo "Aborted."
+          exit 0
+        fi
+        # Strip existing OD_API_TOKEN line
+        if [[ "$(uname)" == "Darwin" ]]; then
+          sed -i '' '/^OD_API_TOKEN=/d' "$OD_ENV_FILE"
+        else
+          sed -i '/^OD_API_TOKEN=/d' "$OD_ENV_FILE"
+        fi
+      fi
+      if ! command -v openssl >/dev/null 2>&1; then
+        echo "❌ ERROR: 'openssl' is required to generate a token" >&2
+        exit 1
+      fi
+      local token
+      token="$(openssl rand -hex 32)"
+      # Ensure trailing newline before append to avoid joining with previous line
+      if [[ -s "$OD_ENV_FILE" && -n "$(tail -c 1 "$OD_ENV_FILE" 2>/dev/null)" ]]; then
+        echo "" >> "$OD_ENV_FILE"
+      fi
+      echo "OD_API_TOKEN=$token" >> "$OD_ENV_FILE"
+      echo "✅ Generated OD_API_TOKEN (256-bit, written to $OD_ENV_FILE)"
+    fi
+
+    # Ensure OD_DAEMON_URL line
+    if ! grep -q "^OD_DAEMON_URL=" "$OD_ENV_FILE"; then
+      if [[ -s "$OD_ENV_FILE" && -n "$(tail -c 1 "$OD_ENV_FILE" 2>/dev/null)" ]]; then
+        echo "" >> "$OD_ENV_FILE"
+      fi
+      echo "OD_DAEMON_URL=$OD_DEFAULT_URL" >> "$OD_ENV_FILE"
+      echo "✅ Set OD_DAEMON_URL=$OD_DEFAULT_URL in $OD_ENV_FILE"
+    fi
+
+    chmod 600 "$OD_ENV_FILE"
+
+    # Ensure network
+    if ensure_network "$OD_NETWORK"; then
+      echo "✅ Docker network '$OD_NETWORK' ready"
+    fi
+
+    # Ensure volume
+    if ! docker volume inspect "$OD_VOLUME" >/dev/null 2>&1; then
+      docker volume create "$OD_VOLUME" >/dev/null
+      echo "✅ Docker volume '$OD_VOLUME' created"
+    else
+      echo "ℹ️  Docker volume '$OD_VOLUME' already exists"
+    fi
+
+    echo ""
+    echo "Next: ai-run open-design start"
+  }
+
+  od_start() {
+    local expose=false
+    local host_port=7456
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --expose) expose=true; shift ;;
+        --port)
+          shift
+          if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+            if (( $1 < 1 || $1 > 65535 )); then
+              echo "❌ ERROR: --port value '$1' out of range (1-65535)" >&2; exit 1
+            fi
+            host_port="$1"
+            shift
+          else
+            echo "❌ ERROR: --port requires a numeric value (e.g. 7456)" >&2; exit 1
+          fi
+          ;;
+        *) echo "❌ ERROR: unknown start flag: $1" >&2; exit 1 ;;
+      esac
+    done
+
+    if ! od_env_has_token; then
+      echo "❌ ERROR: OD_API_TOKEN not found in $OD_ENV_FILE"
+      echo "    Run: ai-run open-design init"
+      exit 1
+    fi
+
+    if ! docker image inspect "$OD_IMAGE" >/dev/null 2>&1; then
+      echo "❌ ERROR: image '$OD_IMAGE' not built"
+      echo "    Run: bash lib/install-open-design.sh"
+      exit 1
+    fi
+
+    ensure_network "$OD_NETWORK" || exit 1
+    docker volume inspect "$OD_VOLUME" >/dev/null 2>&1 || docker volume create "$OD_VOLUME" >/dev/null
+
+    # If a container with this name exists, handle it gracefully
+    if docker ps -a --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+        echo "ℹ️  '$OD_CONTAINER_NAME' is already running"
+        echo "    Use 'ai-run open-design restart' to apply new flags"
+        return 0
+      else
+        echo "🔄 Removing stopped container '$OD_CONTAINER_NAME' to recreate with current flags..."
+        docker rm "$OD_CONTAINER_NAME" >/dev/null
+      fi
+    fi
+
+    local run_args=(
+      run -d
+      --name "$OD_CONTAINER_NAME"
+      --network "$OD_NETWORK"
+      --restart unless-stopped
+      -v "$OD_VOLUME:/app/.od"
+      --env-file "$OD_ENV_FILE"
+    )
+
+    if [[ "$expose" == "true" ]]; then
+      run_args+=(-p "${host_port}:7456")
+    fi
+
+    run_args+=("$OD_IMAGE")
+
+    echo "🔄 Starting $OD_CONTAINER_NAME..."
+    docker "${run_args[@]}" >/dev/null
+    echo "✅ $OD_CONTAINER_NAME running on network '$OD_NETWORK'"
+    if [[ "$expose" == "true" ]]; then
+      echo "   Published to host: http://localhost:${host_port}"
+    else
+      echo "   Internal-only: reachable from sandbox containers as http://ai-open-design:7456"
+    fi
+  }
+
+  od_stop() {
+    if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "🔄 Stopping $OD_CONTAINER_NAME..."
+      docker stop "$OD_CONTAINER_NAME" >/dev/null
+      echo "✅ $OD_CONTAINER_NAME stopped (data preserved in volume '$OD_VOLUME')"
+    else
+      echo "ℹ️  $OD_CONTAINER_NAME is not running"
+    fi
+  }
+
+  od_restart() {
+    od_stop
+    od_start "$@"
+  }
+
+  od_status() {
+    echo "Container : $OD_CONTAINER_NAME"
+    if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "State     : running"
+      local uptime
+      uptime="$(docker inspect -f '{{.State.StartedAt}}' "$OD_CONTAINER_NAME" 2>/dev/null || echo unknown)"
+      echo "Started   : $uptime"
+      local ports
+      ports="$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$OD_CONTAINER_NAME" 2>/dev/null || echo '{}')"
+      echo "Ports     : $ports"
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "State     : stopped"
+      echo "   Hint   : ai-run open-design start"
+    else
+      echo "State     : not installed"
+      echo "   Hint   : ai-run open-design init && ai-run open-design start"
+    fi
+
+    echo "Network   : $OD_NETWORK"
+    echo "Volume    : $OD_VOLUME"
+    if od_env_has_token; then
+      local tok
+      tok="$(od_read_token)"
+      echo "API token : set (***${tok: -4})"
+    else
+      echo "API token : (unset — run 'ai-run open-design init')"
+    fi
+
+    # Try health check (only meaningful if container is running)
+    if docker ps --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      # Try in-container curl first (fast path); fall back to one-off container on same network
+      # because upstream daemon image may not bundle curl
+      local health_ok=false
+      if docker exec "$OD_CONTAINER_NAME" sh -c 'command -v curl' >/dev/null 2>&1; then
+        if docker exec "$OD_CONTAINER_NAME" curl -sf --max-time 3 http://127.0.0.1:7456/api/health >/dev/null 2>&1; then
+          health_ok=true
+        fi
+      else
+        # Fallback: probe via a tiny one-off container in the same network
+        if docker run --rm --network "$OD_NETWORK" curlimages/curl:latest \
+            -sf --max-time 3 "http://${OD_CONTAINER_NAME}:7456/api/health" >/dev/null 2>&1; then
+          health_ok=true
+        fi
+      fi
+      if [[ "$health_ok" == "true" ]]; then
+        echo "Health    : OK"
+      else
+        echo "Health    : FAIL (daemon not responding on /api/health)"
+      fi
+    fi
+  }
+
+  od_logs() {
+    if ! docker ps -a --format '{{.Names}}' | grep -q "^${OD_CONTAINER_NAME}$"; then
+      echo "❌ ERROR: container '$OD_CONTAINER_NAME' does not exist" >&2
+      exit 1
+    fi
+    docker logs "$@" "$OD_CONTAINER_NAME"
+  }
+
+  # Dispatch subcommand
+  SUBCMD="${1:-}"
+  if [[ -n "$SUBCMD" ]]; then shift; fi
+  case "$SUBCMD" in
+    init)    od_init "$@" ;;
+    start)   od_start "$@" ;;
+    stop)    od_stop ;;
+    restart) od_restart "$@" ;;
+    status)  od_status ;;
+    logs)    od_logs "$@" ;;
+    --help|-h|"") od_print_help ;;
+    *)
+      echo "❌ ERROR: unknown subcommand '$SUBCMD'" >&2
+      echo ""
+      od_print_help
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+# ────────────────────────────────────────────────────────────────
+# END OPEN-DESIGN DISPATCHER
+# ────────────────────────────────────────────────────────────────
+
 # Handle no tool specified
 if [[ -z "$TOOL" ]]; then
   if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
@@ -1012,6 +1299,19 @@ discover_custom_networks() {
 get_network_containers() {
   local network="$1"
   docker network inspect "$network" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs | tr ' ' ', '
+}
+
+# Ensure shared Docker network exists for cross-container service discovery
+# (e.g., agent containers reaching the open-design daemon by name)
+ensure_network() {
+  local net="${1:-ai-sandbox}"
+  if ! docker network inspect "$net" >/dev/null 2>&1; then
+    docker network create "$net" >/dev/null 2>&1 || {
+      echo "⚠️  WARNING: failed to create Docker network '$net'" >&2
+      return 1
+    }
+  fi
+  return 0
 }
 
 # Interactive network selection menu (multi-select)
@@ -2761,12 +3061,23 @@ DOCKER_ARGS+=($TOOL_CONFIG_MOUNTS)
 DOCKER_ARGS+=($RG_COMPAT_MOUNT)
 DOCKER_ARGS+=($GIT_MOUNTS)
 DOCKER_ARGS+=($SSH_AGENT_ENV)
+# Default to ai-sandbox network for service discovery if user didn't specify.
+# Only add --network if creation succeeded; otherwise Docker uses its default bridge.
+if [[ -z "$NETWORK_OPTIONS" ]]; then
+  if ensure_network "ai-sandbox" >/dev/null 2>&1; then
+    DOCKER_ARGS+=(--network ai-sandbox)
+  fi
+fi
 DOCKER_ARGS+=($NETWORK_OPTIONS)
 DOCKER_ARGS+=($DISPLAY_FLAGS)
 DOCKER_ARGS+=($HOST_ACCESS_ARGS)
 DOCKER_ARGS+=($PORT_MAPPINGS)
 DOCKER_ARGS+=($OPENCODE_PASSWORD_ENV)
 DOCKER_ARGS+=(-v "$HOME_DIR":/home/agent)
+# Auto-mount open-design data volume read-only so agents can read generated artifacts
+if docker volume inspect ai-open-design-data >/dev/null 2>&1; then
+  DOCKER_ARGS+=(-v "ai-open-design-data:/workspace/.od:ro")
+fi
 DOCKER_ARGS+=($SHARED_CACHE_MOUNTS)
 DOCKER_ARGS+=($NANO_BRAIN_MOUNT)
 DOCKER_ARGS+=(-w "$CURRENT_DIR")
@@ -2784,6 +3095,42 @@ DOCKER_ARGS+=($TERMINAL_SIZE)
 
 DOCKER_ARGS+=("$IMAGE")
 DOCKER_ARGS+=("${DOCKER_COMMAND[@]}")
+
+# Auto-start open-design daemon if image exists but container not running
+if docker image inspect ai-open-design:latest >/dev/null 2>&1; then
+  if ! docker ps --format '{{.Names}}' | grep -q "^ai-open-design$"; then
+    if [[ -t 0 && -t 1 ]]; then
+      printf "🎨 Open Design daemon is not running. Start it? [Y/n] "
+      read -r OD_ANSWER
+      if [[ ! "$OD_ANSWER" =~ ^[Nn]$ ]]; then
+        OD_ENV_FILE="$HOME/.ai-sandbox/env"
+        OD_NETWORK="ai-sandbox"
+        OD_VOLUME="ai-open-design-data"
+        # Auto-init if token missing
+        if ! grep -q "^OD_API_TOKEN=" "$OD_ENV_FILE" 2>/dev/null; then
+          mkdir -p "$(dirname "$OD_ENV_FILE")"
+          touch "$OD_ENV_FILE"
+          chmod 600 "$OD_ENV_FILE"
+          OD_TOKEN="$(openssl rand -hex 32)"
+          echo "OD_API_TOKEN=$OD_TOKEN" >> "$OD_ENV_FILE"
+          echo "OD_DAEMON_URL=http://ai-open-design:7456" >> "$OD_ENV_FILE"
+          echo "✅ Generated OD_API_TOKEN"
+        fi
+        # Ensure network and volume
+        docker network inspect "$OD_NETWORK" >/dev/null 2>&1 || docker network create "$OD_NETWORK" >/dev/null
+        docker volume inspect "$OD_VOLUME" >/dev/null 2>&1 || docker volume create "$OD_VOLUME" >/dev/null
+        # Remove stopped container if exists
+        if docker ps -a --format '{{.Names}}' | grep -q "^ai-open-design$"; then
+          docker rm ai-open-design >/dev/null 2>&1 || true
+        fi
+        docker run -d --name ai-open-design --network "$OD_NETWORK" \
+          --restart unless-stopped -v "$OD_VOLUME:/app/.od" \
+          --env-file "$OD_ENV_FILE" ai-open-design:latest >/dev/null
+        echo "✅ Open Design daemon started (http://ai-open-design:7456)"
+      fi
+    fi
+  fi
+fi
 
 # Execute docker run with proper argument handling
 docker run "${DOCKER_ARGS[@]}"

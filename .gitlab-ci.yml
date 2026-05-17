@@ -3,7 +3,7 @@ variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: ""
   # Default: all tools. Override in CI/CD settings or pipeline trigger.
-  TOOLS: "amp,opencode,claude,droid,gemini,kilo,qwen,codex,aider,qoder,auggie,codebuddy,jules,shai"
+  TOOLS: "amp,opencode,claude,open-design,droid,gemini,kilo,qwen,codex,aider,qoder,auggie,codebuddy,jules,shai"
 
 stages:
   - build
@@ -31,8 +31,9 @@ build_sandbox:
       FAILED=0
       for tool in "${TOOL_ARRAY[@]}"; do
         tool=$(echo "$tool" | tr -d ' ')
-        # Skip openclaw (uses docker-compose, not in image)
+        # Skip tools that run as separate containers
         [ "$tool" = "openclaw" ] && continue
+        [ "$tool" = "open-design" ] && continue
         echo "Checking $tool..."
         docker run --rm ai-sandbox:latest "$tool" --version 2>&1 | head -3 || \
         docker run --rm ai-sandbox:latest "$tool" --help 2>&1 | head -5 || \

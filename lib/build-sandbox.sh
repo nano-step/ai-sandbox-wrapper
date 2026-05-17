@@ -19,6 +19,7 @@ echo "   Tools: $TOOLS"
 
 GENERATE_ONLY=1 INSTALL_RTK="${INSTALL_RTK:-0}" \
   INSTALL_PUP="${INSTALL_PUP:-0}" \
+  INSTALL_OD_HELPERS="${INSTALL_OD_HELPERS:-1}" \
   INSTALL_PLAYWRIGHT_MCP="${INSTALL_PLAYWRIGHT_MCP:-0}" \
   INSTALL_CHROME_DEVTOOLS_MCP="${INSTALL_CHROME_DEVTOOLS_MCP:-0}" \
   INSTALL_PLAYWRIGHT="${INSTALL_PLAYWRIGHT:-0}" \
@@ -64,6 +65,10 @@ BASE_PREAMBLE=$(echo "$BASE_CONTENT" | sed '/^USER agent$/,$d')
 
 if [[ -d "dockerfiles/base/skills" ]]; then
   cp -r "dockerfiles/base/skills" "$SANDBOX_DIR/"
+fi
+
+if [[ -d "dockerfiles/base/scripts" ]]; then
+  cp -r "dockerfiles/base/scripts" "$SANDBOX_DIR/"
 fi
 
 echo "✅ Dockerfile generated at $SANDBOX_DIR/Dockerfile"

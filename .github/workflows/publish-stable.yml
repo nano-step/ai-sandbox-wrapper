@@ -1,0 +1,184 @@
+# Publish Stable — fires on push to master
+#
+# Prerequisites (one-time repo setup):
+#   Repo Settings → Secrets and variables → Actions → New repository secret
+#   Name:  NPM_TOKEN
+#   Value: npm automation token from https://www.npmjs.com/settings/<username>/tokens
+#
+# Developer workflow:
+#   1. Bump version in package.json (e.g. 3.4.3 → 3.5.0)
+#   2. Commit + push to master (or merge a PR)
+#   3. This workflow publishes @kokorolx/ai-sandbox-wrapper@latest,
+#      updates CHANGELOG.md, and creates a GitHub release automatically.
+
+name: Publish Stable
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm install --ignore-scripts
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Publish to npm @latest
+        id: publish
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@kokorolx/ai-sandbox-wrapper@${VERSION}" version &>/dev/null; then
+            echo "Version ${VERSION} already on npm — skipping publish"
+            echo "skipped=true" >> $GITHUB_OUTPUT
+          else
+            npm publish --tag latest --access public
+            echo "skipped=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Generate changelog since last stable tag
+        id: changelog
+        run: |
+          LAST_TAG=$(git tag --list 'v*' --sort=-version:refname \
+            | grep -v 'beta' | head -1 || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${LAST_TAG}..HEAD"
+          fi
+
+          feat=$(git log $RANGE --pretty=format:"%s" --no-merges \
+            | grep "^feat" | sed 's/^/- /' || true)
+          fix=$(git log $RANGE --pretty=format:"%s" --no-merges \
+            | grep "^fix" | sed 's/^/- /' || true)
+          docs=$(git log $RANGE --pretty=format:"%s" --no-merges \
+            | grep "^docs" | sed 's/^/- /' || true)
+          refactor=$(git log $RANGE --pretty=format:"%s" --no-merges \
+            | grep "^refactor" | sed 's/^/- /' || true)
+          chore=$(git log $RANGE --pretty=format:"%s" --no-merges \
+            | grep "^chore" \
+            | grep -v "bump version" \
+            | grep -v "update CHANGELOG" \
+            | grep -v "\[skip ci\]" \
+            | sed 's/^/- /' || true)
+
+          body=""
+          [ -n "$feat" ]     && body+=$'### Added\n'"$feat"$'\n\n'
+          [ -n "$fix" ]      && body+=$'### Fixed\n'"$fix"$'\n\n'
+          [ -n "$refactor" ] && body+=$'### Changed\n'"$refactor"$'\n\n'
+          [ -n "$docs" ]     && body+=$'### Documentation\n'"$docs"$'\n\n'
+          [ -n "$chore" ]    && body+=$'### Other\n'"$chore"$'\n\n'
+          [ -z "$body" ]     && body="_No notable changes_"
+
+          echo "$body" > /tmp/changelog_body.md
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$body" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update CHANGELOG.md
+        run: |
+          python3 << 'PYEOF'
+          import os
+          import re
+          from datetime import date
+
+          version = os.environ['VERSION']
+          today = date.today().strftime('%Y-%m-%d')
+
+          with open('/tmp/changelog_body.md') as f:
+              body = f.read().strip()
+
+          install_line = f"**Install:** `npm install @kokorolx/ai-sandbox-wrapper@{version}`"
+          new_entry = f"## [{version}] - {today}\n\n{body}\n\n{install_line}\n\n"
+
+          with open('CHANGELOG.md') as f:
+              content = f.read()
+
+          # Insert after "All notable changes..." line + blank line, before first ## [ entry
+          marker = 'All notable changes to this project will be documented in this file.'
+          marker_idx = content.find(marker)
+          if marker_idx == -1:
+              # Fallback: prepend after first line
+              insert_pos = content.find('\n') + 1
+          else:
+              after_marker = marker_idx + len(marker)
+              # Skip the trailing newline(s) after the marker line
+              insert_pos = after_marker
+              while insert_pos < len(content) and content[insert_pos] == '\n':
+                  insert_pos += 1
+
+          # Find the first ## [ entry from insert_pos onward
+          first_entry = content.find('\n## [', insert_pos - 1)
+          if first_entry == -1:
+              first_entry = content.find('## [', insert_pos)
+              if first_entry == -1:
+                  content = content + '\n' + new_entry
+              else:
+                  content = content[:first_entry] + new_entry + content[first_entry:]
+          else:
+              # first_entry points to the \n before ## [
+              content = content[:first_entry + 1] + new_entry + content[first_entry + 1:]
+
+          with open('CHANGELOG.md', 'w') as f:
+              f.write(content)
+          PYEOF
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Commit and push CHANGELOG.md
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "CHANGELOG.md already up to date"
+          else
+            git commit -m "chore: update CHANGELOG.md for v${{ steps.version.outputs.version }} [skip ci]"
+            git push origin master
+          fi
+
+      - name: Create GitHub release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const body = `${{ steps.changelog.outputs.body }}`;
+            const tag = `v${version}`;
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              console.log(`Release ${tag} already exists`);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: `ai-sandbox-wrapper v${version}`,
+                body: `${body}\n---\n\n**Install:** \`npm install @kokorolx/ai-sandbox-wrapper@latest\``,
+                prerelease: false,
+                target_commitish: context.sha,
+              });
+            }

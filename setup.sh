@@ -281,8 +281,8 @@ echo "📁 Legacy workspaces file: $WORKSPACES_FILE"
 WORKSPACE="${WORKSPACES[0]}"
 
 # Tool definitions
-TOOL_OPTIONS="amp,opencode,openclaw,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
-TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
+TOOL_OPTIONS="amp,opencode,openclaw,open-design,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
+TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Open Design daemon (HTTP service — agent-driven design generation),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
 
 # Pre-select previously installed tools
 PRESELECTED_TOOLS=""
@@ -303,7 +303,7 @@ echo "Installing tools: ${TOOLS[*]}"
 
 CONTAINERIZED_TOOLS=()
 for tool in "${TOOLS[@]}"; do
-  if [[ "$tool" =~ ^(amp|opencode|openclaw|claude|aider|droid|gemini|kilo|qwen|codex|qoder|auggie|codebuddy|jules|shai)$ ]]; then
+  if [[ "$tool" =~ ^(amp|opencode|openclaw|open-design|claude|aider|droid|gemini|kilo|qwen|codex|qoder|auggie|codebuddy|jules|shai)$ ]]; then
     CONTAINERIZED_TOOLS+=("$tool")
   fi
 done
@@ -311,8 +311,8 @@ done
 echo ""
 if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
   # Category 1: AI Enhancement Tools (spec-driven development, UI/UX, browser automation)
-  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk,pup"
-  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB),Datadog Pup CLI - AI-agent-ready observability CLI (~10MB)"
+  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk,pup,open-design"
+  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB),Datadog Pup CLI - AI-agent-ready observability CLI (~10MB),Open Design daemon - AI design generation service (port 7456)"
 
   multi_select "Select AI Enhancement Tools (installed in containers)" "$AI_TOOL_OPTIONS" "$AI_TOOL_DESCS"
   AI_ENHANCEMENT_TOOLS=("${SELECTED_ITEMS[@]}")
@@ -391,6 +391,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_PLAYWRIGHT_MCP="${INSTALL_PLAYWRIGHT_MCP:-0}"
   INSTALL_RTK="${INSTALL_RTK:-0}"
   INSTALL_PUP="${INSTALL_PUP:-0}"
+  INSTALL_OPEN_DESIGN="${INSTALL_OPEN_DESIGN:-0}"
 
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
     case "$addon" in
@@ -421,10 +422,13 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       pup)
         INSTALL_PUP=1
         ;;
+      open-design)
+        INSTALL_OPEN_DESIGN=1
+        ;;
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK INSTALL_PUP
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK INSTALL_PUP INSTALL_OPEN_DESIGN
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
@@ -502,6 +506,11 @@ TOOLS="$TOOLS_CSV" \
   INSTALL_RTK="$INSTALL_RTK" \
   INSTALL_PUP="$INSTALL_PUP" \
   bash "$SCRIPT_DIR/lib/build-sandbox.sh"
+
+# Install open-design as a separate daemon container (not part of sandbox image)
+if [[ "${INSTALL_OPEN_DESIGN:-0}" -eq 1 ]]; then
+  bash "$SCRIPT_DIR/lib/install-open-design.sh"
+fi
 
 OLD_IMAGES=()
 for tool in "${TOOLS[@]}"; do
@@ -590,6 +599,9 @@ if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
         ;;
       rtk)
         echo "  rtk - Token optimizer for AI coding agents (60-90% savings)"
+        ;;
+      open-design)
+        echo "  open-design - AI design generation daemon (port 7456)"
         ;;
     esac
   done
