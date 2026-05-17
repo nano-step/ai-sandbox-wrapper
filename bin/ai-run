@@ -3096,5 +3096,41 @@ DOCKER_ARGS+=($TERMINAL_SIZE)
 DOCKER_ARGS+=("$IMAGE")
 DOCKER_ARGS+=("${DOCKER_COMMAND[@]}")
 
+# Auto-start open-design daemon if image exists but container not running
+if docker image inspect ai-open-design:latest >/dev/null 2>&1; then
+  if ! docker ps --format '{{.Names}}' | grep -q "^ai-open-design$"; then
+    if [[ -t 0 && -t 1 ]]; then
+      printf "🎨 Open Design daemon is not running. Start it? [Y/n] "
+      read -r OD_ANSWER
+      if [[ ! "$OD_ANSWER" =~ ^[Nn]$ ]]; then
+        OD_ENV_FILE="$HOME/.ai-sandbox/env"
+        OD_NETWORK="ai-sandbox"
+        OD_VOLUME="ai-open-design-data"
+        # Auto-init if token missing
+        if ! grep -q "^OD_API_TOKEN=" "$OD_ENV_FILE" 2>/dev/null; then
+          mkdir -p "$(dirname "$OD_ENV_FILE")"
+          touch "$OD_ENV_FILE"
+          chmod 600 "$OD_ENV_FILE"
+          OD_TOKEN="$(openssl rand -hex 32)"
+          echo "OD_API_TOKEN=$OD_TOKEN" >> "$OD_ENV_FILE"
+          echo "OD_DAEMON_URL=http://ai-open-design:7456" >> "$OD_ENV_FILE"
+          echo "✅ Generated OD_API_TOKEN"
+        fi
+        # Ensure network and volume
+        docker network inspect "$OD_NETWORK" >/dev/null 2>&1 || docker network create "$OD_NETWORK" >/dev/null
+        docker volume inspect "$OD_VOLUME" >/dev/null 2>&1 || docker volume create "$OD_VOLUME" >/dev/null
+        # Remove stopped container if exists
+        if docker ps -a --format '{{.Names}}' | grep -q "^ai-open-design$"; then
+          docker rm ai-open-design >/dev/null 2>&1 || true
+        fi
+        docker run -d --name ai-open-design --network "$OD_NETWORK" \
+          --restart unless-stopped -v "$OD_VOLUME:/app/.od" \
+          --env-file "$OD_ENV_FILE" ai-open-design:latest >/dev/null
+        echo "✅ Open Design daemon started (http://ai-open-design:7456)"
+      fi
+    fi
+  fi
+fi
+
 # Execute docker run with proper argument handling
 docker run "${DOCKER_ARGS[@]}"
