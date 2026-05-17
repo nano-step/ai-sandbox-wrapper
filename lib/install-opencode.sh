@@ -4,9 +4,12 @@ set -e
 dockerfile_snippet() {
   cat <<'SNIPPET'
 USER root
-RUN HOME=/root curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash && \
+ENV HOME=/root
+RUN curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash && \
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /root/.opencode
+USER agent
+ENV HOME=/home/agent
 SNIPPET
 }
 
@@ -32,11 +35,13 @@ if [[ -n "$OPENCODE_VERSION" ]]; then
 FROM ai-base:latest
 
 USER root
-RUN HOME=/root curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION && \\
+ENV HOME=/root
+RUN curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION && \\
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \\
     rm -rf /root/.opencode
 
 USER agent
+ENV HOME=/home/agent
 ENTRYPOINT ["opencode"]
 EOF
 else
@@ -44,11 +49,13 @@ else
 FROM ai-base:latest
 
 USER root
-RUN HOME=/root curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash && \
+ENV HOME=/root
+RUN curl -fsSL --retry 3 --retry-delay 5 https://opencode.ai/install | bash && \
     mv /root/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /root/.opencode
 
 USER agent
+ENV HOME=/home/agent
 ENTRYPOINT ["opencode"]
 EOF
 fi
