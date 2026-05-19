@@ -337,8 +337,8 @@ if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
   echo ""
 
   # Category 3: MCP Tools (Browser automation for AI agents)
-  MCP_OPTIONS="chrome-devtools-mcp,playwright-mcp"
-  MCP_DESCS="Google Chrome DevTools MCP - performance profiling + debugging (~400MB),Microsoft Playwright MCP - multi-browser automation (~300MB)"
+  MCP_OPTIONS="chrome-devtools-mcp,playwright-mcp,chrome-devtools-mcp-host,playwright-mcp-host"
+  MCP_DESCS="Google Chrome DevTools MCP - performance profiling + debugging (~400MB),Microsoft Playwright MCP - multi-browser automation (~300MB),Chrome DevTools MCP via host Chrome - no container Chromium (~30MB),Playwright MCP via host Chrome - no container Chromium (~30MB)"
 
   multi_select "Select MCP Tools for AI Agent Browser Automation" "$MCP_OPTIONS" "$MCP_DESCS"
   MCP_TOOLS=("${SELECTED_ITEMS[@]}")
@@ -416,6 +416,14 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       playwright-mcp)
         INSTALL_PLAYWRIGHT_MCP=1
         ;;
+      chrome-devtools-mcp-host)
+        INSTALL_CHROME_DEVTOOLS_MCP=1
+        INSTALL_PLAYWRIGHT_HOST=1
+        ;;
+      playwright-mcp-host)
+        INSTALL_PLAYWRIGHT_MCP=1
+        INSTALL_PLAYWRIGHT_HOST=1
+        ;;
       rtk)
         INSTALL_RTK=1
         ;;
@@ -428,7 +436,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_RTK INSTALL_PUP INSTALL_OPEN_DESIGN
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_PLAYWRIGHT_HOST INSTALL_RTK INSTALL_PUP INSTALL_OPEN_DESIGN
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
@@ -503,6 +511,7 @@ TOOLS="$TOOLS_CSV" \
   INSTALL_RUBY="$INSTALL_RUBY" \
   INSTALL_CHROME_DEVTOOLS_MCP="$INSTALL_CHROME_DEVTOOLS_MCP" \
   INSTALL_PLAYWRIGHT_MCP="$INSTALL_PLAYWRIGHT_MCP" \
+  INSTALL_PLAYWRIGHT_HOST="$INSTALL_PLAYWRIGHT_HOST" \
   INSTALL_RTK="$INSTALL_RTK" \
   INSTALL_PUP="$INSTALL_PUP" \
   bash "$SCRIPT_DIR/lib/build-sandbox.sh"
