@@ -1095,16 +1095,12 @@ unset -f _pmcp_resolve_script_dir
 if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]] && declare -f pmcp::sanitize_name >/dev/null; then
   PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
   if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
-    _HAS_BROWSER_MCP=false
-    jq -e '.mcp.installed // [] | index("playwright") != null' "$AI_SANDBOX_CONFIG" &>/dev/null && _HAS_BROWSER_MCP=true
-    jq -e '.mcp.installed // [] | index("chrome-devtools") != null' "$AI_SANDBOX_CONFIG" &>/dev/null && _HAS_BROWSER_MCP=true
-    if [[ "$_HAS_BROWSER_MCP" == "false" ]]; then
+    if ! jq -e '.mcp.installed // [] | any(. == "playwright" or . == "chrome-devtools")' "$AI_SANDBOX_CONFIG" &>/dev/null; then
       echo ""
       echo "ℹ️  Host Chrome configured but no browser MCP installed — skipping."
       echo "   Run setup.sh and select playwright-mcp or chrome-devtools-mcp to enable AI browser control."
       PLAYWRIGHT_HOST_CHROME=""
     fi
-    unset _HAS_BROWSER_MCP
     # Ask user whether to open host Chrome browser
     if [[ -t 0 ]] && [[ -n "$PLAYWRIGHT_HOST_CHROME" ]]; then
       echo ""
