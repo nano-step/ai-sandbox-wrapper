@@ -1095,8 +1095,14 @@ unset -f _pmcp_resolve_script_dir
 if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBOX_CONFIG" ]] && declare -f pmcp::sanitize_name >/dev/null; then
   PLAYWRIGHT_HOST_CHROME=$(jq -r '.mcp.chromePath // empty' "$AI_SANDBOX_CONFIG" 2>/dev/null)
   if [[ -n "$PLAYWRIGHT_HOST_CHROME" ]] && [[ -f "$PLAYWRIGHT_HOST_CHROME" ]]; then
+    if ! jq -e '.mcp.installed // [] | any(. == "playwright" or . == "chrome-devtools")' "$AI_SANDBOX_CONFIG" &>/dev/null; then
+      echo ""
+      echo "ℹ️  Host Chrome configured but no browser MCP installed — skipping."
+      echo "   Run setup.sh and select playwright-mcp or chrome-devtools-mcp to enable AI browser control."
+      PLAYWRIGHT_HOST_CHROME=""
+    fi
     # Ask user whether to open host Chrome browser
-    if [[ -t 0 ]]; then
+    if [[ -t 0 ]] && [[ -n "$PLAYWRIGHT_HOST_CHROME" ]]; then
       echo ""
       echo "🌐 Host Chrome browser is configured: $PLAYWRIGHT_HOST_CHROME"
       printf "   Open browser for AI agent? [y/N] "
@@ -3081,6 +3087,7 @@ DOCKER_ARGS+=(-w "$CURRENT_DIR")
 DOCKER_ARGS+=(--env-file "$ENV_FILE")
 DOCKER_ARGS+=(-e TERM="$TERM")
 DOCKER_ARGS+=(-e COLORTERM="$COLORTERM")
+[[ -n "${TERM_PROGRAM:-}" ]] && DOCKER_ARGS+=(-e TERM_PROGRAM="$TERM_PROGRAM")
 if [[ -n "${PLAYWRIGHT_MCP_NAME:-}" ]]; then
   DOCKER_ARGS+=(-e "PLAYWRIGHT_MCP_NAME=$PLAYWRIGHT_MCP_NAME")
   DOCKER_ARGS+=(-e "PLAYWRIGHT_PORT=$HOST_CHROME_CDP_PORT")

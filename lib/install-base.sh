@@ -180,8 +180,16 @@ fi
 # MCP Tools for AI agent browser automation
 # Both tools share Playwright's Chromium (native ARM64/x86_64, avoids Puppeteer arch issues)
 if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
-  echo "📦 Installing shared Chromium browser for MCP tools"
-  ADDITIONAL_TOOLS_INSTALL+='RUN apt-get update && apt-get install -y --no-install-recommends \
+  if [[ "${INSTALL_PLAYWRIGHT_HOST:-0}" -eq 1 ]]; then
+    echo "📦 MCP tools (host Chrome mode) — skipping container Chromium + system deps"
+    if [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
+      ADDITIONAL_TOOLS_INSTALL+='RUN npm install -g @playwright/mcp@latest && \
+    touch /opt/.mcp-playwright-installed
+'
+    fi
+  else
+    echo "📦 Installing shared Chromium browser for MCP tools"
+    ADDITIONAL_TOOLS_INSTALL+='RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libnspr4 \
     libnss3 \
@@ -212,18 +220,7 @@ if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_M
     wget \
     && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
-'
-  
-  # Only install Chromium if not using host Chrome
-  if [[ "${INSTALL_PLAYWRIGHT_HOST:-0}" -eq 1 ]]; then
-    echo "  📦 Using host Chrome - skipping Chromium installation"
-    ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /opt/playwright-browsers && \
-    npm install -g @playwright/mcp@latest && \
-    touch /opt/.mcp-playwright-installed
-'
-  else
-    echo "  📦 Installing Chromium browser for MCP tools"
-    ADDITIONAL_TOOLS_INSTALL+='RUN mkdir -p /opt/playwright-browsers && \
+RUN mkdir -p /opt/playwright-browsers && \
     npm install -g @playwright/mcp@latest && \
     npx playwright-core install --no-shell chromium && \
     npx playwright-core install-deps chromium && \
