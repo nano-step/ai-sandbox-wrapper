@@ -77,6 +77,7 @@ echo "✅ Dockerfile generated at $SANDBOX_DIR/Dockerfile"
 echo "🔨 Building ai-sandbox:latest..."
 HOST_UID=$(id -u)
 docker build ${DOCKER_NO_CACHE:+--no-cache} \
+  --network=host \
   --build-arg AGENT_UID="${HOST_UID}" \
   -t "ai-sandbox:latest" "$SANDBOX_DIR"
 

@@ -35,6 +35,6 @@ EOF
 
 # Build image
 echo "Building Docker image for droid..."
-docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-droid:latest" "dockerfiles/droid"
+docker build ${DOCKER_NO_CACHE:+--no-cache} --network=host -t "ai-droid:latest" "dockerfiles/droid"
 
 echo "✅ droid installed"

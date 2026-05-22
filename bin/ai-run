@@ -3071,6 +3071,12 @@ if [[ -z "$NETWORK_OPTIONS" ]]; then
     DOCKER_ARGS+=(--network ai-sandbox)
   fi
 fi
+# Add DNS servers for custom networks (required for external npm registry access)
+# Only add if user specified a custom network or ai-sandbox was created
+if [[ -n "$NETWORK_OPTIONS" ]] || [[ -z "$NETWORK_OPTIONS" ]]; then
+  DOCKER_ARGS+=(--dns 8.8.8.8)
+  DOCKER_ARGS+=(--dns 1.1.1.1)
+fi
 DOCKER_ARGS+=($NETWORK_OPTIONS)
 DOCKER_ARGS+=($DISPLAY_FLAGS)
 DOCKER_ARGS+=($HOST_ACCESS_ARGS)

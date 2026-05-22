@@ -42,7 +42,7 @@ EOF
 
 # Build image
 echo "Building Docker image for $TOOL (native binary)..."
-docker build ${DOCKER_NO_CACHE:+--no-cache} -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
+docker build ${DOCKER_NO_CACHE:+--no-cache} --network=host -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
 
 echo "✅ $TOOL installed (Native Binary)"
 echo ""

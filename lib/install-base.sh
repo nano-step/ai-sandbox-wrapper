@@ -324,6 +324,7 @@ fi
 echo "Building base Docker image..."
 HOST_UID=$(id -u)
 docker build ${DOCKER_NO_CACHE:+--no-cache} \
+  --network=host \
   --build-arg AGENT_UID="${HOST_UID}" \
   -t "ai-base:latest" "dockerfiles/base"
 echo "✅ Base image built (ai-base:latest)"
