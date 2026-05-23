@@ -323,9 +323,9 @@ if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
 
   echo ""
 
-  # Category 2: Language Runtimes (Ruby, etc.)
-  LANG_OPTIONS="ruby"
-  LANG_DESCS="Ruby 3.3.0 + Rails 8.0.2 via rbenv (~500MB)"
+  # Category 2: Language Runtimes (Ruby, Go, etc.)
+  LANG_OPTIONS="ruby,go"
+  LANG_DESCS="Ruby 3.3.0 + Rails 8.0.2 via rbenv (~500MB),Go 1.23.0 + sqlc + goose + golangci-lint (~250MB)"
 
   multi_select "Select Additional Language Runtimes (installed in containers)" "$LANG_OPTIONS" "$LANG_DESCS"
   LANGUAGE_RUNTIMES=("${SELECTED_ITEMS[@]}")
@@ -387,6 +387,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_OPENSPEC="${INSTALL_OPENSPEC:-0}"
   INSTALL_PLAYWRIGHT="${INSTALL_PLAYWRIGHT:-0}"
   INSTALL_RUBY="${INSTALL_RUBY:-0}"
+  INSTALL_GO="${INSTALL_GO:-0}"
   INSTALL_CHROME_DEVTOOLS_MCP="${INSTALL_CHROME_DEVTOOLS_MCP:-0}"
   INSTALL_PLAYWRIGHT_MCP="${INSTALL_PLAYWRIGHT_MCP:-0}"
   INSTALL_RTK="${INSTALL_RTK:-0}"
@@ -409,6 +410,9 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
         ;;
       ruby)
         INSTALL_RUBY=1
+        ;;
+      go)
+        INSTALL_GO=1
         ;;
       chrome-devtools-mcp)
         INSTALL_CHROME_DEVTOOLS_MCP=1
@@ -436,7 +440,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_PLAYWRIGHT_HOST INSTALL_RTK INSTALL_PUP INSTALL_OPEN_DESIGN
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_GO INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_PLAYWRIGHT_HOST INSTALL_RTK INSTALL_PUP INSTALL_OPEN_DESIGN
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"

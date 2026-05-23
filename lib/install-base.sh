@@ -177,6 +177,20 @@ RUN gem install rails -v 8.0.2 && gem install bundler solargraph && rbenv rehash
 '
 fi
 
+if [[ "${INSTALL_GO:-0}" -eq 1 ]]; then
+  echo "📦 Go 1.23.0 + Go tools will be installed in base image"
+  ADDITIONAL_TOOLS_INSTALL+='RUN curl -fsSL https://go.dev/dl/go1.23.0.linux-$(dpkg --print-architecture).tar.gz | tar -C /usr/local -xz
+
+ENV PATH=/usr/local/go/bin:/home/agent/go/bin:$PATH
+ENV GOPATH=/home/agent/go
+ENV GOTOOLCHAIN=local
+
+RUN GOBIN=/usr/local/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 && \
+    GOBIN=/usr/local/bin go install github.com/pressly/goose/v3/cmd/goose@v3.24.3 && \
+    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.62.2
+'
+fi
+
 # MCP Tools for AI agent browser automation
 # Both tools share Playwright's Chromium (native ARM64/x86_64, avoids Puppeteer arch issues)
 if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
@@ -308,8 +322,8 @@ WORKDIR /workspace
 
 # Non-root user for security (match host UID)
 RUN useradd -m -u \${AGENT_UID} -d /home/agent agent && \\
-    mkdir -p /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config && \\
-    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config /workspace && \\
+    mkdir -p /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config /home/agent/go && \\
+    chown -R agent:agent /home/agent/.cache /home/agent/.npm /home/agent/.opencode /home/agent/.config /home/agent/go /workspace && \\
     ([ -d /opt/playwright-browsers ] && chown -R agent:agent /opt/playwright-browsers || true)
 USER agent
 ENV HOME=/home/agent
