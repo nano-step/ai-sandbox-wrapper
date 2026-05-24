@@ -8,6 +8,15 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [4.2.5] — 2026-05-24
+
+_No notable changes_
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@4.2.5`
+
+---
+
 ## [4.2.4] — 2026-05-24
 
 _No notable changes_
