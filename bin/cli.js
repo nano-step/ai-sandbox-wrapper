@@ -141,6 +141,7 @@ function runRebuild() {
     INSTALL_PLAYWRIGHT_HOST: useHostChrome ? '1' : '0',
     INSTALL_RTK: '0',
     INSTALL_PUP: '0',
+    INSTALL_ACLI: '0',
     INSTALL_OD_HELPERS: '1',
     INSTALL_SPEC_KIT: '0',
     INSTALL_UX_UI_PROMAX: '0',
