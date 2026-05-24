@@ -9,6 +9,8 @@ jobs:
     permissions:
       contents: write
     uses: nano-step/shared-workflows/.github/workflows/publish-stable.yml@v1
+    permissions:
+      contents: write
     with:
       package-name: "@kokorolx/ai-sandbox-wrapper"
     secrets:
