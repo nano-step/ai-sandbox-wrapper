@@ -7,6 +7,8 @@ on:
 jobs:
   publish:
     uses: nano-step/shared-workflows/.github/workflows/publish-beta.yml@v1
+    permissions:
+      contents: write
     with:
       package-name: "@kokorolx/ai-sandbox-wrapper"
     secrets:
