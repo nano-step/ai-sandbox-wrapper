@@ -169,6 +169,7 @@ During setup, you can optionally install additional tools into the base Docker i
 | ux-ui-promax | UI/UX design intelligence tool | ~30MB |
 | openspec | OpenSpec - spec-driven development | ~20MB |
 | playwright | Browser automation with Chromium/Firefox/WebKit | ~500MB |
+| acli | Atlassian CLI - Jira / Confluence / Bitbucket | ~30MB |
 
 **Playwright** is useful when AI tools need to:
 - Run browser-based tests

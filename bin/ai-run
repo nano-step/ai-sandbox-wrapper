@@ -93,6 +93,7 @@ Build Environment Variables (inline with setup.sh or install scripts):
   INSTALL_SPEC_KIT=1             Install spec-kit (specify CLI)
   INSTALL_UX_UI_PROMAX=1         Install uipro CLI
   INSTALL_OPENSPEC=1             Install OpenSpec CLI
+  INSTALL_ACLI=1                 Install Atlassian CLI (acli) for Jira/Confluence/Bitbucket
 
 Container Environment Variables (passed to container via ~/.ai-sandbox/env):
 -----------------------------------------------------------------------------

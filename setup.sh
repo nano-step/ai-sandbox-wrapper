@@ -311,8 +311,8 @@ done
 echo ""
 if [[ ${#CONTAINERIZED_TOOLS[@]} -gt 0 ]]; then
   # Category 1: AI Enhancement Tools (spec-driven development, UI/UX, browser automation)
-  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk,pup,open-design"
-  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB),Datadog Pup CLI - AI-agent-ready observability CLI (~10MB),Open Design daemon - AI design generation service (port 7456)"
+  AI_TOOL_OPTIONS="spec-kit,ux-ui-promax,openspec,playwright,rtk,pup,acli,open-design"
+  AI_TOOL_DESCS="Spec-driven development toolkit,UI/UX design intelligence tool,OpenSpec - spec-driven development,Browser automation + Chromium/Firefox/WebKit (~500MB),RTK token optimizer - reduces LLM token usage by 60-90% (~5MB),Datadog Pup CLI - AI-agent-ready observability CLI (~10MB),Atlassian CLI (acli) - Jira/Confluence/Bitbucket from the terminal (~30MB),Open Design daemon - AI design generation service (port 7456)"
 
   multi_select "Select AI Enhancement Tools (installed in containers)" "$AI_TOOL_OPTIONS" "$AI_TOOL_DESCS"
   AI_ENHANCEMENT_TOOLS=("${SELECTED_ITEMS[@]}")
@@ -392,6 +392,7 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   INSTALL_PLAYWRIGHT_MCP="${INSTALL_PLAYWRIGHT_MCP:-0}"
   INSTALL_RTK="${INSTALL_RTK:-0}"
   INSTALL_PUP="${INSTALL_PUP:-0}"
+  INSTALL_ACLI="${INSTALL_ACLI:-0}"
   INSTALL_OPEN_DESIGN="${INSTALL_OPEN_DESIGN:-0}"
 
   for addon in "${ADDITIONAL_TOOLS[@]}"; do
@@ -434,13 +435,16 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
       pup)
         INSTALL_PUP=1
         ;;
+      acli)
+        INSTALL_ACLI=1
+        ;;
       open-design)
         INSTALL_OPEN_DESIGN=1
         ;;
     esac
   done
 
-  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_GO INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_PLAYWRIGHT_HOST INSTALL_RTK INSTALL_PUP INSTALL_OPEN_DESIGN
+  export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_GO INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_PLAYWRIGHT_HOST INSTALL_RTK INSTALL_PUP INSTALL_ACLI INSTALL_OPEN_DESIGN
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"
@@ -518,6 +522,7 @@ TOOLS="$TOOLS_CSV" \
   INSTALL_PLAYWRIGHT_HOST="$INSTALL_PLAYWRIGHT_HOST" \
   INSTALL_RTK="$INSTALL_RTK" \
   INSTALL_PUP="$INSTALL_PUP" \
+  INSTALL_ACLI="$INSTALL_ACLI" \
   bash "$SCRIPT_DIR/lib/build-sandbox.sh"
 
 # Install open-design as a separate daemon container (not part of sandbox image)
@@ -612,6 +617,9 @@ if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
         ;;
       rtk)
         echo "  rtk - Token optimizer for AI coding agents (60-90% savings)"
+        ;;
+      acli)
+        echo "  acli - Atlassian CLI for Jira / Confluence / Bitbucket"
         ;;
       open-design)
         echo "  open-design - AI design generation daemon (port 7456)"

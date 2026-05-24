@@ -191,6 +191,27 @@ RUN GOBIN=/usr/local/bin go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 &&
 '
 fi
 
+if [[ "${INSTALL_ACLI:-0}" -eq 1 ]]; then
+  echo "📦 Atlassian CLI (acli) will be installed in base image (official APT repo)"
+  # Install via Atlassian's official Debian APT repository.
+  # Mirrors the existing pattern used for `gh` (GitHub CLI) in the base image:
+  # adds the repo's GPG key + sources entry, then apt-get install.
+  # Source: https://developer.atlassian.com/cloud/acli/guides/install-linux/
+  ADDITIONAL_TOOLS_INSTALL+='# Install Atlassian CLI (acli) for Jira/Confluence/Bitbucket from the command line
+# (gnupg is needed for `gpg --dearmor` because Atlassian publishes an
+# ASCII-armored .asc key; the base node:22-bookworm-slim image does not include gnupg)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gnupg \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://acli.atlassian.com/gpg/public-key.asc | gpg --dearmor -o /etc/apt/keyrings/acli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/acli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] https://acli.atlassian.com/linux/deb stable main" > /etc/apt/sources.list.d/acli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends acli \
+    && rm -rf /var/lib/apt/lists/*
+'
+fi
+
 # MCP Tools for AI agent browser automation
 # Both tools share Playwright's Chromium (native ARM64/x86_64, avoids Puppeteer arch issues)
 if [[ "${INSTALL_CHROME_DEVTOOLS_MCP:-0}" -eq 1 ]] || [[ "${INSTALL_PLAYWRIGHT_MCP:-0}" -eq 1 ]]; then
