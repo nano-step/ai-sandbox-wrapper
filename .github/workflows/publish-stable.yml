@@ -15,5 +15,4 @@ jobs:
     uses: nano-step/shared-workflows/.github/workflows/publish-stable.yml@v1
     with:
       package-name: "@kokorolx/ai-sandbox-wrapper"
-    secrets:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    secrets: inherit
