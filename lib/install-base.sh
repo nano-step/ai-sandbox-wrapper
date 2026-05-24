@@ -198,7 +198,11 @@ if [[ "${INSTALL_ACLI:-0}" -eq 1 ]]; then
   # adds the repo's GPG key + sources entry, then apt-get install.
   # Source: https://developer.atlassian.com/cloud/acli/guides/install-linux/
   ADDITIONAL_TOOLS_INSTALL+='# Install Atlassian CLI (acli) for Jira/Confluence/Bitbucket from the command line
-RUN mkdir -p -m 755 /etc/apt/keyrings \
+# (gnupg is needed for `gpg --dearmor` because Atlassian publishes an
+# ASCII-armored .asc key; the base node:22-bookworm-slim image does not include gnupg)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gnupg \
+    && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://acli.atlassian.com/gpg/public-key.asc | gpg --dearmor -o /etc/apt/keyrings/acli-archive-keyring.gpg \
     && chmod go+r /etc/apt/keyrings/acli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] https://acli.atlassian.com/linux/deb stable main" > /etc/apt/sources.list.d/acli.list \
