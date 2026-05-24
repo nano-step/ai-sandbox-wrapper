@@ -2,7 +2,11 @@ name: Publish Beta
 
 on:
   push:
-    branches: [beta]
+    branches: [beta, develop]
+
+concurrency:
+  group: publish-beta-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:

@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
 
+concurrency:
+  group: publish-stable-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     permissions:
