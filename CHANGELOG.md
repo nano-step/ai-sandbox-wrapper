@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [4.1.0] — 2026-05-24
+
+### Added
+- feat: add Atlassian CLI (acli) as installable additional tool
+- feat: add Go 1.23 toolchain support (#16)
+- feat: add /reddit command for drafting subreddit-compliant posts (#4)
+- feat: add /idea command for monetization strategic code analysis (#6)
+- feat: add /security command for advanced security audit workflow (#7)
+- feat: add /blog workflow command for multi-platform blog generation (#8)
+- feat(mcp): add host Chrome variants for playwright-mcp and chrome-devtools-mcp (#14)
+
+### Fixed
+- fix(acli): install gnupg in acli RUN block so gpg --dearmor works
+- fix: resolve npm registry DNS issues in Docker builds and containers
+- fix: bumb version
+
+### Other
+- chore: add package-lock.json so publish-stable npm ci can run
+- chore: migrate workflows to kokorolx/shared-workflows@v1
+
+**Install:** `npm install @kokorolx/ai-sandbox-wrapper@4.1.0`
+
+---
+
 ## [4.0.2] - 2026-05-17
 
 ### Fixed
