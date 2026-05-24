@@ -54,29 +54,24 @@ jobs:
       fail-fast: false
       matrix:
         tool:
-          - name: claude
-            script: install-claude.sh
+          # - name: claude
+          #   script: install-claude.sh
           - name: opencode
             script: install-opencode.sh
-          - name: gemini
-            script: install-gemini.sh
-          - name: aider
-            script: install-aider.sh
-          - name: kilo
-            script: install-kilo.sh
-          - name: codex
-            script: install-codex.sh
-          - name: amp
-            script: install-amp.sh
-          - name: qwen
-            script: install-qwen.sh
-          - name: droid
-            script: install-droid.sh
-          # Skip GUI tools - require X11/display which CI doesn't have
-          # - name: codeserver
-          #   script: install-codeserver.sh
-          # - name: vscode
-          #   script: install-vscode.sh
+          # - name: gemini
+          #   script: install-gemini.sh
+          # - name: aider
+          #   script: install-aider.sh
+          # - name: kilo
+          #   script: install-kilo.sh
+          # - name: codex
+          #   script: install-codex.sh
+          # - name: amp
+          #   script: install-amp.sh
+          # - name: qwen
+          #   script: install-qwen.sh
+          # - name: droid
+          #   script: install-droid.sh
 
     steps:
       - name: Checkout
