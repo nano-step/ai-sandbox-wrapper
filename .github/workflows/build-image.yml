@@ -75,9 +75,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -124,18 +121,13 @@ jobs:
 
       - name: Build ai-base
         if: env.FROM_IMAGE_PRESET == ''
-        uses: docker/build-push-action@v6
-        with:
-          context: dockerfiles/base
-          file: dockerfiles/base/Dockerfile
-          tags: ai-base:latest
-          platforms: ${{ matrix.platform }}
-          load: true
-          push: false
-          cache-from: type=gha,scope=base-${{ inputs.tool }}-${{ matrix.suffix }}
-          cache-to: type=gha,scope=base-${{ inputs.tool }}-${{ matrix.suffix }},mode=max
-          build-args: |
-            AGENT_UID=1001
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg AGENT_UID=1001 \
+            -t ai-base:latest \
+            dockerfiles/base
+          echo "✅ Built ai-base:latest"
 
       - name: Generate tool Dockerfile
         run: |
@@ -144,28 +136,13 @@ jobs:
           echo "--- dockerfiles/${{ inputs.tool }}/Dockerfile ---"
           cat dockerfiles/${{ inputs.tool }}/Dockerfile
 
-      - name: Build tool image (from pulled base)
-        if: env.FROM_IMAGE_PRESET != ''
+      - name: Build tool image
         run: |
           set -euo pipefail
           docker build \
             -t "ai-${{ inputs.tool }}:latest" \
-            -f "dockerfiles/${{ inputs.tool }}/Dockerfile" \
             "dockerfiles/${{ inputs.tool }}"
-          echo "✅ Built ai-${{ inputs.tool }}:latest from pulled base"
-
-      - name: Build tool image
-        if: env.FROM_IMAGE_PRESET == ''
-        uses: docker/build-push-action@v6
-        with:
-          context: dockerfiles/${{ inputs.tool }}
-          file: dockerfiles/${{ inputs.tool }}/Dockerfile
-          platforms: ${{ matrix.platform }}
-          load: true
-          push: false
-          tags: ai-${{ inputs.tool }}:latest
-          cache-from: type=gha,scope=tool-${{ inputs.preset }}-${{ matrix.suffix }}
-          cache-to: type=gha,scope=tool-${{ inputs.preset }}-${{ matrix.suffix }},mode=max
+          echo "✅ Built ai-${{ inputs.tool }}:latest"
 
       - name: Smoke test
         run: |
