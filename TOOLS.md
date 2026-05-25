@@ -177,6 +177,26 @@ During setup, you can optionally install additional tools into the base Docker i
 - Verify UI changes
 - Automate browser workflows
 
+**Atlassian CLI (`acli`)** — how to log in from inside the sandbox:
+
+> ⚠️ **Do NOT run `acli auth login`** (the top-level OAuth flow). It requires a browser-based OAuth callback to `localhost`, which cannot reach the host browser from inside a Docker container. It will hang on `Authenticating...` and then fail with `✗ Error: authentication failed`.
+>
+> Use the **API-token flow** for Jira and Confluence instead — this works headless and is the supported path for CI / containers / SSH sessions:
+>
+> 1. Create an Atlassian API token on the host browser: <https://id.atlassian.com/manage-profile/security/api-tokens>
+> 2. Inside the container, log in non-interactively:
+>    ```bash
+>    echo "YOUR_API_TOKEN" | acli jira auth login \
+>      --site "yourcompany.atlassian.net" \
+>      --email "you@yourcompany.com" \
+>      --token
+>    ```
+> 3. Verify: `acli jira auth status`
+>
+> Repeat with `acli confluence auth login` for Confluence (separate auth state, same flags).
+>
+> The auth state is stored at `~/.config/acli/` and is **bind-mounted from the host** by `ai-run`, so it persists across container rebuilds and across different AI-tool sessions (claude, opencode, gemini, …) once logged in once.
+
 ### Language Runtimes
 
 | Runtime | Description | Size Impact |

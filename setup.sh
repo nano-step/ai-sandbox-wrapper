@@ -620,6 +620,9 @@ if [[ ${#ADDITIONAL_TOOLS[@]} -gt 0 ]]; then
         ;;
       acli)
         echo "  acli - Atlassian CLI for Jira / Confluence / Bitbucket"
+        echo "         ⚠️  In containers, use API-token auth (NOT 'acli auth login' OAuth):"
+        echo "             echo \$TOKEN | acli jira auth login --site SITE.atlassian.net --email YOU --token"
+        echo "             API tokens: https://id.atlassian.com/manage-profile/security/api-tokens"
         ;;
       open-design)
         echo "  open-design - AI design generation daemon (port 7456)"
