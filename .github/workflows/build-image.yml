@@ -120,8 +120,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           load: true
           push: false
-          cache-from: type=gha,scope=base-${{ inputs.preset }}-${{ matrix.suffix }}
-          cache-to: type=gha,scope=base-${{ inputs.preset }}-${{ matrix.suffix }},mode=max
+          cache-from: type=gha,scope=base-${{ inputs.tool }}-${{ matrix.suffix }}
+          cache-to: type=gha,scope=base-${{ inputs.tool }}-${{ matrix.suffix }},mode=max
           build-args: |
             AGENT_UID=1001
 
