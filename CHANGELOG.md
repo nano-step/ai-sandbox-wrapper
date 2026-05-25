@@ -16,6 +16,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.1.5] — 2026-05-25
+
+### Documentation
+- docs(readme): expand pre-built image section with full contents table (#26)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.1.5`
+
+---
+
 ## [5.1.4] — 2026-05-25
 
 ### Fixed
