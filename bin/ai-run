@@ -1021,6 +1021,16 @@ for tool in $(get_installed_tools); do
   done
 done
 
+# Mount configs for sandbox addons. Addons are installed unconditionally into
+# the base image when their INSTALL_* flag was set at build time — their auth
+# data should survive container rebuilds the same way primary tools' does.
+#
+# Pre-create the host directory so Docker's bind-mount doesn't create it as
+# root-owned (acli binary only exists in the container, so $HOME/.config/acli
+# never pre-exists on the host on first launch).
+mkdir -p "$HOME/.config/acli"
+mount_tool_config "$HOME/.config/acli" ".config/acli"
+
 setup_opencode_rg_compat() {
   [[ "$TOOL" != "opencode" ]] && return 0
 
