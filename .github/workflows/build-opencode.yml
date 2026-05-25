@@ -29,29 +29,15 @@ on:
           - full
 
 jobs:
-  matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      presets: ${{ steps.compute.outputs.presets }}
-    steps:
-      - id: compute
-        run: |
-          set -euo pipefail
-          INPUT_PRESET="${{ github.event.inputs.preset }}"
-          if [[ -n "$INPUT_PRESET" ]]; then
-            PRESETS="[\"$INPUT_PRESET\"]"
-          else
-            PRESETS='["base","full"]'
-          fi
-          echo "presets=$PRESETS" >> "$GITHUB_OUTPUT"
-          echo "Matrix presets: $PRESETS"
-
   build:
-    needs: matrix
     strategy:
       fail-fast: false
       matrix:
-        preset: ${{ fromJSON(needs.matrix.outputs.presets) }}
+        preset: [base, full]
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.preset == '' ||
+      github.event.inputs.preset == matrix.preset
     uses: ./.github/workflows/build-image.yml
     with:
       tool: opencode
