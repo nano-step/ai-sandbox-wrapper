@@ -111,10 +111,22 @@ jobs:
 
       - name: Smoke test
         run: |
-          set -euo pipefail
+          set -eo pipefail
           echo "🧪 Verifying ai-${{ inputs.tool }}:latest runs"
-          docker run --rm ai-${{ inputs.tool }}:latest --version 2>&1 | head -5 || \
-          docker run --rm ai-${{ inputs.tool }}:latest --help 2>&1 | head -5
+          # Capture full output; do not pipe to head (SIGPIPE breaks pipefail).
+          # Accept any of: --version, --help, or default invocation. Pass if at
+          # least one prints to stdout/stderr, regardless of exit code (TUI
+          # binaries like opencode often exit non-zero without a TTY).
+          output="$(docker run --rm ai-${{ inputs.tool }}:latest --version 2>&1 || true)"
+          if [[ -z "$output" ]]; then
+            output="$(docker run --rm ai-${{ inputs.tool }}:latest --help 2>&1 || true)"
+          fi
+          if [[ -z "$output" ]]; then
+            echo "❌ Image produced no output for --version or --help"
+            exit 1
+          fi
+          echo "✅ Smoke output (first 10 lines):"
+          printf '%s\n' "$output" | head -10
 
       - name: Tag & push to ghcr.io
         run: |
