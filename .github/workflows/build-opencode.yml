@@ -20,6 +20,9 @@ on:
 
 jobs:
   build-base:
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/build-image.yml
     with:
       tool: opencode
@@ -27,6 +30,9 @@ jobs:
     secrets: inherit
 
   build-full:
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/build-image.yml
     with:
       tool: opencode
