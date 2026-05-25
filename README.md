@@ -301,6 +301,38 @@ OpenCode containers auto-install these skills on first run (existing skills are 
 
 Skills are copied to `~/.config/opencode/skills/` and available immediately.
 
+### Pre-built Images from ghcr.io
+
+Skip the 10-20 minute local build by pulling pre-built images from GitHub Container Registry:
+
+```bash
+# Use the published image (default: ghcr.io/nano-step/ai-opencode:base)
+AI_IMAGE_SOURCE=registry ai-run opencode
+
+# Use the larger "full" variant (adds Playwright + open-design helpers)
+AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=full ai-run opencode
+
+# Pin to a specific version
+AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=base-v5.0.0 ai-run opencode
+
+# Override the registry entirely (e.g. fall back to GitLab)
+AI_IMAGE_SOURCE=registry \
+  AI_IMAGE_REGISTRY=registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-sandbox \
+  AI_IMAGE_TAG=latest \
+  ai-run opencode
+```
+
+**Available variants:**
+
+| Tag | Size | Includes |
+|-----|------|----------|
+| `base` | ~2.3 GB | spec-kit, ux-ui-promax, openspec, RTK, pup, acli, Go 1.23, MCP tools (host Chrome mode) |
+| `full` | ~2.7 GB | everything in `base` + `od-status`/`od-health` helpers + standalone Playwright |
+
+Both variants ship `opencode` as the entrypoint. MCP browser tools require host Chrome configured in `~/.ai-sandbox/config.json` (`mcp.chromePath`).
+
+Tag formats: `<preset>` (rolling), `<preset>-sha-<short>` (immutable per commit), `<preset>-v<version>` (semver).
+
 ---
 
 ## 📁 Directory Structure
