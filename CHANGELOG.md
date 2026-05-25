@@ -15,6 +15,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.1.4] — 2026-05-25
+
+### Fixed
+- fix(ci): make smoke test resilient to SIGPIPE and TUI exit codes (#25)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.1.4`
+
+---
+
 ## [5.1.3] — 2026-05-25
 
 ### Fixed
