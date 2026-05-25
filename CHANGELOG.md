@@ -14,6 +14,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.1.3] — 2026-05-25
+
+### Fixed
+- fix(ci): grant packages: write to build-opencode caller jobs (#24)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.1.3`
+
+---
+
 ## [5.1.2] — 2026-05-25
 
 ### Fixed
