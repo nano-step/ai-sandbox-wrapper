@@ -9,6 +9,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.0.0] — 2026-05-25
+
+### ⚠ Breaking Changes
+- feat!: migrate npm package to @nano-step scope
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.0.0`
+
+---
+
 ## [4.2.5] — 2026-05-24
 
 _No notable changes_
