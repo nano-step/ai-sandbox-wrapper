@@ -13,6 +13,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.1.2] — 2026-05-25
+
+### Fixed
+- fix(ci): use two explicit jobs in build-opencode.yml (#23)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.1.2`
+
+---
+
 ## [5.1.1] — 2026-05-25
 
 ### Fixed
