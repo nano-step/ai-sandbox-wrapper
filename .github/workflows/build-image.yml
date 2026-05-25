@@ -104,7 +104,18 @@ jobs:
             echo "$key=$value" >> "$GITHUB_ENV"
           done < "$PRESET_FILE"
 
+      - name: Pull base image
+        if: env.FROM_IMAGE_PRESET != ''
+        run: |
+          set -euo pipefail
+          BASE_IMAGE="${{ needs.prepare.outputs.image }}:${FROM_IMAGE_PRESET}"
+          echo "📦 Pulling $BASE_IMAGE (platform: ${{ matrix.platform }})"
+          docker pull --platform "${{ matrix.platform }}" "$BASE_IMAGE"
+          docker tag "$BASE_IMAGE" ai-base:latest
+          echo "✅ Re-tagged as ai-base:latest"
+
       - name: Generate base Dockerfile
+        if: env.FROM_IMAGE_PRESET == ''
         run: |
           set -euo pipefail
           GENERATE_ONLY=1 bash lib/install-base.sh
@@ -112,6 +123,7 @@ jobs:
           head -40 dockerfiles/base/Dockerfile
 
       - name: Build ai-base
+        if: env.FROM_IMAGE_PRESET == ''
         uses: docker/build-push-action@v6
         with:
           context: dockerfiles/base
