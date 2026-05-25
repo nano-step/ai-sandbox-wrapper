@@ -1,0 +1,146 @@
+name: Build & Publish Image (reusable)
+
+# Reusable workflow: builds ai-<tool> from ai-base and pushes to ghcr.io.
+# Contract: tool input → lib/install-<tool>.sh, preset input → ci/presets/<preset>.env.
+# Pushes 3 tags per build: <preset>, <preset>-sha-<short>, <preset>-v<version>.
+# Design rationale: openspec/changes/publish-opencode-image-ghcr/design.md
+
+on:
+  workflow_call:
+    inputs:
+      tool:
+        description: "Tool name (matches lib/install-<tool>.sh)"
+        type: string
+        required: true
+      preset:
+        description: "Preset name (matches ci/presets/<preset>.env)"
+        type: string
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load preset flags
+        id: preset
+        run: |
+          set -euo pipefail
+          PRESET_FILE="ci/presets/${{ inputs.preset }}.env"
+          if [[ ! -f "$PRESET_FILE" ]]; then
+            echo "❌ Preset file not found: $PRESET_FILE"
+            exit 1
+          fi
+          echo "📋 Loading $PRESET_FILE"
+          cat "$PRESET_FILE"
+          while IFS='=' read -r key value; do
+            [[ "$key" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$key" ]] && continue
+            key="$(echo "$key" | tr -d '[:space:]')"
+            value="$(echo "$value" | tr -d '[:space:]')"
+            [[ -z "$key" || -z "$value" ]] && continue
+            echo "$key=$value" >> "$GITHUB_ENV"
+          done < "$PRESET_FILE"
+
+      - name: Compute tags
+        id: tags
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="$(node -p "require('./package.json').version")"
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          IMAGE="${{ env.REGISTRY }}/${OWNER}/ai-${{ inputs.tool }}"
+          PRESET="${{ inputs.preset }}"
+          {
+            echo "short_sha=${SHORT_SHA}"
+            echo "version=${VERSION}"
+            echo "image=${IMAGE}"
+            echo "tag_rolling=${IMAGE}:${PRESET}"
+            echo "tag_sha=${IMAGE}:${PRESET}-sha-${SHORT_SHA}"
+            echo "tag_version=${IMAGE}:${PRESET}-v${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+          echo "🏷️  Tags:"
+          echo "  - ${IMAGE}:${PRESET}"
+          echo "  - ${IMAGE}:${PRESET}-sha-${SHORT_SHA}"
+          echo "  - ${IMAGE}:${PRESET}-v${VERSION}"
+
+      - name: Generate base Dockerfile
+        run: |
+          set -euo pipefail
+          GENERATE_ONLY=1 bash lib/install-base.sh
+          echo "--- dockerfiles/base/Dockerfile (first 40 lines) ---"
+          head -40 dockerfiles/base/Dockerfile
+
+      - name: Build ai-base
+        uses: docker/build-push-action@v6
+        with:
+          context: dockerfiles/base
+          file: dockerfiles/base/Dockerfile
+          tags: ai-base:latest
+          load: true
+          push: false
+          cache-from: type=gha,scope=base-${{ inputs.preset }}
+          cache-to: type=gha,scope=base-${{ inputs.preset }},mode=max
+          build-args: |
+            AGENT_UID=1001
+
+      - name: Generate tool Dockerfile and build
+        run: |
+          set -euo pipefail
+          bash lib/install-${{ inputs.tool }}.sh
+          echo "--- dockerfiles/${{ inputs.tool }}/Dockerfile ---"
+          cat dockerfiles/${{ inputs.tool }}/Dockerfile
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          echo "🧪 Verifying ai-${{ inputs.tool }}:latest runs"
+          docker run --rm ai-${{ inputs.tool }}:latest --version 2>&1 | head -5 || \
+          docker run --rm ai-${{ inputs.tool }}:latest --help 2>&1 | head -5
+
+      - name: Tag & push to ghcr.io
+        run: |
+          set -euo pipefail
+          docker tag ai-${{ inputs.tool }}:latest ${{ steps.tags.outputs.tag_rolling }}
+          docker tag ai-${{ inputs.tool }}:latest ${{ steps.tags.outputs.tag_sha }}
+          docker tag ai-${{ inputs.tool }}:latest ${{ steps.tags.outputs.tag_version }}
+          docker push ${{ steps.tags.outputs.tag_rolling }}
+          docker push ${{ steps.tags.outputs.tag_sha }}
+          docker push ${{ steps.tags.outputs.tag_version }}
+          echo "✅ Pushed:"
+          echo "  - ${{ steps.tags.outputs.tag_rolling }}"
+          echo "  - ${{ steps.tags.outputs.tag_sha }}"
+          echo "  - ${{ steps.tags.outputs.tag_version }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Build Summary"
+            echo ""
+            echo "- **Tool**: \`${{ inputs.tool }}\`"
+            echo "- **Preset**: \`${{ inputs.preset }}\`"
+            echo "- **Image**: \`${{ steps.tags.outputs.image }}\`"
+            echo "- **Tags pushed**:"
+            echo "  - \`${{ steps.tags.outputs.tag_rolling }}\`"
+            echo "  - \`${{ steps.tags.outputs.tag_sha }}\`"
+            echo "  - \`${{ steps.tags.outputs.tag_version }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
