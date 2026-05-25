@@ -303,17 +303,20 @@ Skills are copied to `~/.config/opencode/skills/` and available immediately.
 
 ### Pre-built Images from ghcr.io
 
-Skip the 10-20 minute local build by pulling pre-built images from GitHub Container Registry:
+Skip the 10-20 minute local build by pulling pre-built `ai-opencode` images from GitHub Container Registry. Default pull target is **`ghcr.io/nano-step/ai-opencode:base`**.
 
 ```bash
-# Use the published image (default: ghcr.io/nano-step/ai-opencode:base)
+# Default pull — :base variant
 AI_IMAGE_SOURCE=registry ai-run opencode
 
-# Use the larger "full" variant (adds Playwright + open-design helpers)
+# :full variant (superset of base; see comparison below)
 AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=full ai-run opencode
 
-# Pin to a specific version
-AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=base-v5.0.0 ai-run opencode
+# Pin to a specific version (semver from package.json)
+AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=base-v5.1.3 ai-run opencode
+
+# Pin to an exact commit
+AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=base-sha-2e6a0c4 ai-run opencode
 
 # Override the registry entirely (e.g. fall back to GitLab)
 AI_IMAGE_SOURCE=registry \
@@ -322,16 +325,50 @@ AI_IMAGE_SOURCE=registry \
   ai-run opencode
 ```
 
-**Available variants:**
+**Environment variables**:
+- `AI_IMAGE_SOURCE=registry` — opt in to registry pull (default: `local`, builds locally).
+- `AI_IMAGE_REGISTRY` — override registry path (default: `ghcr.io/nano-step/ai-opencode`).
+- `AI_IMAGE_TAG` — choose preset or pinned version (default: `base`).
 
-| Tag | Size | Includes |
-|-----|------|----------|
-| `base` | ~2.3 GB | spec-kit, ux-ui-promax, openspec, RTK, pup, acli, Go 1.23, MCP tools (host Chrome mode) |
-| `full` | ~2.7 GB | everything in `base` + `od-status`/`od-health` helpers + standalone Playwright |
+**Tag formats**:
+- `<preset>` — rolling latest (e.g. `:base`, `:full`). **← `ai-run` default = `:base`.**
+- `<preset>-sha-<short>` — immutable per commit (e.g. `:base-sha-2e6a0c4`).
+- `<preset>-v<version>` — semver from `package.json` (e.g. `:base-v5.1.3`).
 
-Both variants ship `opencode` as the entrypoint. MCP browser tools require host Chrome configured in `~/.ai-sandbox/config.json` (`mcp.chromePath`).
+#### Image contents — what's inside each variant
 
-Tag formats: `<preset>` (rolling), `<preset>-sha-<short>` (immutable per commit), `<preset>-v<version>` (semver).
+Both variants share the **same base layer** (Node 22, Bun, pnpm, Python 3 + pipx + uv, ripgrep, fd, tmux, vim, gh CLI, TypeScript/Python LSP servers, PDF/OCR tools, build-essential). They differ only in the opt-in `INSTALL_*` flags layered on top.
+
+| Component | `:base` (~2.3 GB) | `:full` (~2.7 GB) |
+|---|:---:|:---:|
+| `opencode` binary (ENTRYPOINT) | ✅ | ✅ |
+| **Coding helpers** | | |
+| spec-kit (`specify`) | ✅ | ✅ |
+| ux-ui-promax (`uipro`) | ✅ | ✅ |
+| OpenSpec CLI (`openspec`) | ✅ | ✅ |
+| RTK (token optimizer) + OpenCode skills `rtk`, `rtk-setup` | ✅ | ✅ |
+| Atlassian CLI (`acli`) | ✅ | ✅ |
+| **Observability** | | |
+| Datadog Pup CLI + OpenCode skill `dd-pup` | ✅ | ✅ |
+| **Language toolchains** | | |
+| Go 1.23 + `sqlc`, `goose`, `golangci-lint` | ✅ | ✅ |
+| Ruby + Rails | ❌ | ❌ |
+| **Browser tools** | | |
+| chrome-devtools-mcp (host CDP mode) | ✅ | ✅ |
+| @playwright/mcp (host CDP mode) | ✅ | ✅ |
+| Chromium binary in container | ❌ (host mode) | ❌ (host mode) |
+| Playwright npm + browsers (standalone) | ❌ | ✅ |
+| **Open Design** | | |
+| `od-status` / `od-health` helper scripts | ❌ | ✅ |
+
+**Practical guidance:**
+
+- **`:base` (default)** — pick this for normal OpenCode usage. It has every tool needed for coding, code review, observability work, and MCP browser automation against host Chrome.
+- **`:full`** — pick this if you also need to run standalone Playwright scripts inside the container (e.g. `npx playwright test`) or use the Open Design daemon helpers.
+
+Neither variant ships Chromium **inside** the container — both MCP browser tools (chrome-devtools-mcp, playwright-mcp) connect to **host Chrome over CDP**. You must configure `mcp.chromePath` in `~/.ai-sandbox/config.json` for browser MCP to work.
+
+The exact preset definitions live in [`ci/presets/base.env`](./ci/presets/base.env) and [`ci/presets/full.env`](./ci/presets/full.env) — these are the source of truth for what each image ships. Adding a new tool to a preset requires editing one of these files (see [AGENTS.md](./AGENTS.md) "Adding a New Tool > Kind B").
 
 ---
 
