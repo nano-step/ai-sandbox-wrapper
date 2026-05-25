@@ -1,0 +1,59 @@
+name: Build & Publish ai-opencode
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "lib/install-base.sh"
+      - "lib/install-opencode.sh"
+      - "skills/rtk/**"
+      - "skills/rtk-setup/**"
+      - "skills/dd-pup/**"
+      - "scripts/od-status"
+      - "scripts/od-health"
+      - "ci/presets/*.env"
+      - ".github/workflows/build-image.yml"
+      - ".github/workflows/build-opencode.yml"
+      - "dockerfiles/opencode/**"
+      - "dockerfiles/base/**"
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: "Which preset to build (leave empty for all)"
+        required: false
+        type: choice
+        default: ""
+        options:
+          - ""
+          - base
+          - full
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      presets: ${{ steps.compute.outputs.presets }}
+    steps:
+      - id: compute
+        run: |
+          set -euo pipefail
+          INPUT_PRESET="${{ github.event.inputs.preset }}"
+          if [[ -n "$INPUT_PRESET" ]]; then
+            PRESETS="[\"$INPUT_PRESET\"]"
+          else
+            PRESETS='["base","full"]'
+          fi
+          echo "presets=$PRESETS" >> "$GITHUB_OUTPUT"
+          echo "Matrix presets: $PRESETS"
+
+  build:
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: ${{ fromJSON(needs.matrix.outputs.presets) }}
+    uses: ./.github/workflows/build-image.yml
+    with:
+      tool: opencode
+      preset: ${{ matrix.preset }}
+    secrets: inherit

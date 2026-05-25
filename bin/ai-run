@@ -58,8 +58,16 @@ Environment Variables Reference
 
 Runtime Environment Variables (inline with ai-run):
 ---------------------------------------------------
-  AI_IMAGE_SOURCE=registry    Use pre-built images from GitLab registry instead of local
+  AI_IMAGE_SOURCE=registry    Use pre-built images from container registry instead of local
                               Example: AI_IMAGE_SOURCE=registry ai-run opencode
+
+  AI_IMAGE_REGISTRY=...       Override the registry/image path used when AI_IMAGE_SOURCE=registry
+                              Default: ghcr.io/nano-step/ai-opencode
+                              Example: AI_IMAGE_REGISTRY=registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-sandbox ai-run opencode
+
+  AI_IMAGE_TAG=...            Override the image tag used when AI_IMAGE_SOURCE=registry
+                              Default: base   (options: base, full, base-sha-<short>, base-v<x.y.z>, full-sha-<short>, full-v<x.y.z>)
+                              Example: AI_IMAGE_TAG=full ai-run opencode
 
   AI_RUN_DEBUG=1              Enable debug output (shows Docker command details)
                               Example: AI_RUN_DEBUG=1 ai-run opencode
@@ -806,9 +814,12 @@ if [[ "$ALLOWED" != "true" ]]; then
   fi
 fi
 
-# Image source selection: local or registry (GitLab)
-# Set AI_IMAGE_SOURCE=registry in ~/.ai-env to use pre-built images
+# Image source selection: local or registry (default: ghcr.io)
+# Set AI_IMAGE_SOURCE=registry in ~/.ai-env to use pre-built images.
+# Override registry path with AI_IMAGE_REGISTRY, override tag with AI_IMAGE_TAG.
 AI_IMAGE_SOURCE="${AI_IMAGE_SOURCE:-local}"
+AI_IMAGE_REGISTRY="${AI_IMAGE_REGISTRY:-ghcr.io/nano-step/ai-opencode}"
+AI_IMAGE_TAG="${AI_IMAGE_TAG:-base}"
 
 # ============================================================================
 # SCREENSHOT DIRECTORY DETECTION (macOS Only)
@@ -857,7 +868,7 @@ if [[ "$(uname)" == "Darwin" ]] && [[ -t 0 ]]; then
 fi
 
 if [[ "$AI_IMAGE_SOURCE" == "registry" ]]; then
-  IMAGE="registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-sandbox:latest"
+  IMAGE="${AI_IMAGE_REGISTRY}:${AI_IMAGE_TAG}"
 else
   IMAGE="ai-sandbox:latest"
 fi
