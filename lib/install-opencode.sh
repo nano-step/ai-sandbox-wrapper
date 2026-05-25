@@ -60,6 +60,12 @@ ENTRYPOINT ["opencode"]
 EOF
 fi
 
+# GENERATE_ONLY mode: write Dockerfile but don't build
+if [[ "${GENERATE_ONLY:-0}" -eq 1 ]]; then
+  echo "✅ OpenCode Dockerfile generated at dockerfiles/$TOOL/Dockerfile"
+  exit 0
+fi
+
 # Build image
 echo "Building Docker image for $TOOL (native binary)..."
 docker build ${DOCKER_NO_CACHE:+--no-cache} --network=host -t "ai-$TOOL:latest" "dockerfiles/$TOOL"

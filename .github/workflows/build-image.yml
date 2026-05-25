@@ -3,6 +3,7 @@ name: Build & Publish Image (reusable)
 # Reusable workflow: builds ai-<tool> from ai-base and pushes to ghcr.io.
 # Contract: tool input → lib/install-<tool>.sh, preset input → ci/presets/<preset>.env.
 # Pushes 3 tags per build: <preset>, <preset>-sha-<short>, <preset>-v<version>.
+# Multi-arch: builds natively on amd64 + arm64 runners, then merges into one manifest.
 # Design rationale: openspec/changes/publish-opencode-image-ghcr/design.md
 
 on:
@@ -21,44 +22,20 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+    outputs:
+      short_sha: ${{ steps.tags.outputs.short_sha }}
+      version: ${{ steps.tags.outputs.version }}
+      image: ${{ steps.tags.outputs.image }}
+      tag_rolling: ${{ steps.tags.outputs.tag_rolling }}
+      tag_sha: ${{ steps.tags.outputs.tag_sha }}
+      tag_version: ${{ steps.tags.outputs.tag_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Load preset flags
-        id: preset
-        run: |
-          set -euo pipefail
-          PRESET_FILE="ci/presets/${{ inputs.preset }}.env"
-          if [[ ! -f "$PRESET_FILE" ]]; then
-            echo "❌ Preset file not found: $PRESET_FILE"
-            exit 1
-          fi
-          echo "📋 Loading $PRESET_FILE"
-          cat "$PRESET_FILE"
-          while IFS='=' read -r key value; do
-            [[ "$key" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "$key" ]] && continue
-            key="$(echo "$key" | tr -d '[:space:]')"
-            value="$(echo "$value" | tr -d '[:space:]')"
-            [[ -z "$key" || -z "$value" ]] && continue
-            echo "$key=$value" >> "$GITHUB_ENV"
-          done < "$PRESET_FILE"
 
       - name: Compute tags
         id: tags
@@ -77,10 +54,55 @@ jobs:
             echo "tag_sha=${IMAGE}:${PRESET}-sha-${SHORT_SHA}"
             echo "tag_version=${IMAGE}:${PRESET}-v${VERSION}"
           } >> "$GITHUB_OUTPUT"
-          echo "🏷️  Tags:"
-          echo "  - ${IMAGE}:${PRESET}"
-          echo "  - ${IMAGE}:${PRESET}-sha-${SHORT_SHA}"
-          echo "  - ${IMAGE}:${PRESET}-v${VERSION}"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm64
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load preset flags
+        run: |
+          set -euo pipefail
+          PRESET_FILE="ci/presets/${{ inputs.preset }}.env"
+          if [[ ! -f "$PRESET_FILE" ]]; then
+            echo "❌ Preset file not found: $PRESET_FILE"
+            exit 1
+          fi
+          echo "📋 Loading $PRESET_FILE"
+          cat "$PRESET_FILE"
+          while IFS='=' read -r key value; do
+            [[ "$key" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$key" ]] && continue
+            key="$(echo "$key" | tr -d '[:space:]')"
+            value="$(echo "$value" | tr -d '[:space:]')"
+            [[ -z "$key" || -z "$value" ]] && continue
+            echo "$key=$value" >> "$GITHUB_ENV"
+          done < "$PRESET_FILE"
 
       - name: Generate base Dockerfile
         run: |
@@ -95,28 +117,37 @@ jobs:
           context: dockerfiles/base
           file: dockerfiles/base/Dockerfile
           tags: ai-base:latest
+          platforms: ${{ matrix.platform }}
           load: true
           push: false
-          cache-from: type=gha,scope=base-${{ inputs.preset }}
-          cache-to: type=gha,scope=base-${{ inputs.preset }},mode=max
+          cache-from: type=gha,scope=base-${{ inputs.preset }}-${{ matrix.suffix }}
+          cache-to: type=gha,scope=base-${{ inputs.preset }}-${{ matrix.suffix }},mode=max
           build-args: |
             AGENT_UID=1001
 
-      - name: Generate tool Dockerfile and build
+      - name: Generate tool Dockerfile
         run: |
           set -euo pipefail
-          bash lib/install-${{ inputs.tool }}.sh
+          GENERATE_ONLY=1 bash lib/install-${{ inputs.tool }}.sh
           echo "--- dockerfiles/${{ inputs.tool }}/Dockerfile ---"
           cat dockerfiles/${{ inputs.tool }}/Dockerfile
+
+      - name: Build tool image
+        uses: docker/build-push-action@v6
+        with:
+          context: dockerfiles/${{ inputs.tool }}
+          file: dockerfiles/${{ inputs.tool }}/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: ai-${{ inputs.tool }}:latest
+          cache-from: type=gha,scope=tool-${{ inputs.preset }}-${{ matrix.suffix }}
+          cache-to: type=gha,scope=tool-${{ inputs.preset }}-${{ matrix.suffix }},mode=max
 
       - name: Smoke test
         run: |
           set -eo pipefail
-          echo "🧪 Verifying ai-${{ inputs.tool }}:latest runs"
-          # Capture full output; do not pipe to head (SIGPIPE breaks pipefail).
-          # Accept any of: --version, --help, or default invocation. Pass if at
-          # least one prints to stdout/stderr, regardless of exit code (TUI
-          # binaries like opencode often exit non-zero without a TTY).
+          echo "🧪 Smoke test on ${{ matrix.platform }}"
           output="$(docker run --rm ai-${{ inputs.tool }}:latest --version 2>&1 || true)"
           if [[ -z "$output" ]]; then
             output="$(docker run --rm ai-${{ inputs.tool }}:latest --help 2>&1 || true)"
@@ -128,19 +159,70 @@ jobs:
           echo "✅ Smoke output (first 10 lines):"
           printf '%s\n' "$output" | head -10
 
-      - name: Tag & push to ghcr.io
+      - name: Push per-arch digest
+        id: push
         run: |
           set -euo pipefail
-          docker tag ai-${{ inputs.tool }}:latest ${{ steps.tags.outputs.tag_rolling }}
-          docker tag ai-${{ inputs.tool }}:latest ${{ steps.tags.outputs.tag_sha }}
-          docker tag ai-${{ inputs.tool }}:latest ${{ steps.tags.outputs.tag_version }}
-          docker push ${{ steps.tags.outputs.tag_rolling }}
-          docker push ${{ steps.tags.outputs.tag_sha }}
-          docker push ${{ steps.tags.outputs.tag_version }}
-          echo "✅ Pushed:"
-          echo "  - ${{ steps.tags.outputs.tag_rolling }}"
-          echo "  - ${{ steps.tags.outputs.tag_sha }}"
-          echo "  - ${{ steps.tags.outputs.tag_version }}"
+          IMAGE="${{ needs.prepare.outputs.image }}"
+          ARCH_TAG="${IMAGE}:${{ inputs.preset }}-${{ matrix.suffix }}"
+          docker tag ai-${{ inputs.tool }}:latest "$ARCH_TAG"
+          docker push "$ARCH_TAG"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$ARCH_TAG" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "✅ Pushed $ARCH_TAG ($DIGEST)"
+
+  merge:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          set -euo pipefail
+          IMAGE="${{ needs.prepare.outputs.image }}"
+          AMD64="${IMAGE}:${{ inputs.preset }}-amd64"
+          ARM64="${IMAGE}:${{ inputs.preset }}-arm64"
+          TAGS=(
+            "${{ needs.prepare.outputs.tag_rolling }}"
+            "${{ needs.prepare.outputs.tag_sha }}"
+            "${{ needs.prepare.outputs.tag_version }}"
+          )
+          for TAG in "${TAGS[@]}"; do
+            docker manifest create "$TAG" "$AMD64" "$ARM64"
+            docker manifest push "$TAG"
+            echo "✅ Pushed manifest: $TAG"
+          done
+
+      - name: Cleanup per-arch tags
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          PACKAGE="ai-${{ inputs.tool }}"
+          AUTH=(-H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json")
+          for SUFFIX in amd64 arm64; do
+            ARCH_TAG="${{ inputs.preset }}-${SUFFIX}"
+            for SCOPE in "orgs/${OWNER}" "users/${OWNER}"; do
+              VERSIONS=$(curl -s "${AUTH[@]}" \
+                "https://api.github.com/${SCOPE}/packages/container/${PACKAGE}/versions?per_page=100" 2>/dev/null || echo "[]")
+              VERSION_ID=$(echo "$VERSIONS" | jq -r ".[] | select(.metadata.container.tags | index(\"${ARCH_TAG}\")) | .id" 2>/dev/null || echo "")
+              if [[ -n "$VERSION_ID" ]]; then
+                curl -s -X DELETE "${AUTH[@]}" \
+                  "https://api.github.com/${SCOPE}/packages/container/${PACKAGE}/versions/${VERSION_ID}" || true
+                echo "🧹 Deleted ${ARCH_TAG} via ${SCOPE}"
+                break
+              fi
+            done
+          done
 
       - name: Summary
         if: always()
@@ -150,9 +232,10 @@ jobs:
             echo ""
             echo "- **Tool**: \`${{ inputs.tool }}\`"
             echo "- **Preset**: \`${{ inputs.preset }}\`"
-            echo "- **Image**: \`${{ steps.tags.outputs.image }}\`"
+            echo "- **Platforms**: \`linux/amd64, linux/arm64\`"
+            echo "- **Image**: \`${{ needs.prepare.outputs.image }}\`"
             echo "- **Tags pushed**:"
-            echo "  - \`${{ steps.tags.outputs.tag_rolling }}\`"
-            echo "  - \`${{ steps.tags.outputs.tag_sha }}\`"
-            echo "  - \`${{ steps.tags.outputs.tag_version }}\`"
+            echo "  - \`${{ needs.prepare.outputs.tag_rolling }}\`"
+            echo "  - \`${{ needs.prepare.outputs.tag_sha }}\`"
+            echo "  - \`${{ needs.prepare.outputs.tag_version }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
