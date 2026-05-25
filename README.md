@@ -33,6 +33,23 @@ Protect your SSH keys, API tokens, and system files while using AI tools that ne
 
 ## ✨ What's New
 
+### 📦 Package moved to `@nano-step` scope
+
+This project is now published as **`@nano-step/ai-sandbox-wrapper`**. The old `@kokorolx/ai-sandbox-wrapper` package is deprecated and will no longer receive updates.
+
+```bash
+# Old (deprecated)
+npx @kokorolx/ai-sandbox-wrapper setup
+
+# New
+npx @nano-step/ai-sandbox-wrapper setup
+```
+
+If you have the old package globally installed, uninstall it:
+```bash
+npm uninstall -g @kokorolx/ai-sandbox-wrapper
+```
+
 ### v2.7.0: Git Fetch-Only Mode & Bundled Skills
 
 - **Git Fetch-Only**: Allow git fetch/pull but block push — perfect for AI agents that should read but not write
@@ -48,9 +65,9 @@ opencode --git-fetch
 #   5) Fetch only - always for this workspace (no push)
 
 # Manage via CLI
-npx @kokorolx/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
-npx @kokorolx/ai-sandbox-wrapper git full ~/projects/myrepo
-npx @kokorolx/ai-sandbox-wrapper git status
+npx @nano-step/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
+npx @nano-step/ai-sandbox-wrapper git full ~/projects/myrepo
+npx @nano-step/ai-sandbox-wrapper git status
 ```
 
 ---
@@ -72,7 +89,7 @@ npx @kokorolx/ai-sandbox-wrapper git status
 
 ```bash
 # Install
-npx @kokorolx/ai-sandbox-wrapper setup
+npx @nano-step/ai-sandbox-wrapper setup
 
 # Reload shell
 source ~/.zshrc
@@ -100,7 +117,7 @@ OPENAI_API_KEY=sk-...
 ### Workspaces
 
 ```bash
-npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/my-app
+npx @nano-step/ai-sandbox-wrapper workspace add ~/projects/my-app
 # Or: echo '/path/to/project' >> ~/.ai-sandbox/workspaces
 ```
 
@@ -188,8 +205,8 @@ Git credentials are **not** shared by default. When you run a tool, you'll be pr
 opencode --git-fetch
 
 # Manage via CLI
-npx @kokorolx/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
-npx @kokorolx/ai-sandbox-wrapper git full ~/projects/myrepo
+npx @nano-step/ai-sandbox-wrapper git fetch-only ~/projects/myrepo
+npx @nano-step/ai-sandbox-wrapper git full ~/projects/myrepo
 ```
 
 ### Nano-brain Auto-Repair
@@ -349,8 +366,8 @@ ai-run npx nano-brain status                      # With auto-repair
 AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
 
 # Management
-npx @kokorolx/ai-sandbox-wrapper workspace list
-npx @kokorolx/ai-sandbox-wrapper clean
+npx @nano-step/ai-sandbox-wrapper workspace list
+npx @nano-step/ai-sandbox-wrapper clean
 ```
 
 ---

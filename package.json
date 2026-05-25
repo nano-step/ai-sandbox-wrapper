@@ -1,5 +1,5 @@
 {
-  "name": "@kokorolx/ai-sandbox-wrapper",
+  "name": "@nano-step/ai-sandbox-wrapper",
   "version": "4.2.5",
   "description": "Docker-based security sandbox for AI coding agents. Isolate Claude, Gemini, Aider, and other AI tools from your host system.",
   "keywords": [
@@ -13,16 +13,19 @@
     "opencode",
     "coding-assistant"
   ],
-  "homepage": "https://github.com/kokorolx/ai-sandbox-wrapper",
+  "homepage": "https://github.com/nano-step/ai-sandbox-wrapper",
   "bugs": {
-    "url": "https://github.com/kokorolx/ai-sandbox-wrapper/issues"
+    "url": "https://github.com/nano-step/ai-sandbox-wrapper/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kokorolx/ai-sandbox-wrapper.git"
+    "url": "git+https://github.com/nano-step/ai-sandbox-wrapper.git"
   },
   "license": "MIT",
-  "author": "kokorolx",
+  "author": "nano-step",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "ai-sandbox-wrapper": "bin/cli.js"
   },

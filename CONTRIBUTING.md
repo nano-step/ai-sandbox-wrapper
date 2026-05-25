@@ -77,7 +77,7 @@ Use the issue templates:
 
 ```bash
 # Clone
-git clone https://github.com/kokorolx/ai-sandbox-wrapper.git
+git clone https://github.com/nano-step/ai-sandbox-wrapper.git
 cd ai-sandbox-wrapper
 
 # Test setup

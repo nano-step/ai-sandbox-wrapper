@@ -225,7 +225,7 @@ In v2.1.0+, tool configurations are **directly bind-mounted** from your host. Th
 **Currently Supported for Direct Mount:**
 - ✅ All tools listed above
 
-Please [open an issue](https://github.com/kokorolx/ai-sandbox-wrapper/issues) if you encounter problems with specific tools.
+Please [open an issue](https://github.com/nano-step/ai-sandbox-wrapper/issues) if you encounter problems with specific tools.
 
 ### Tool-Specific Issues
 
@@ -257,10 +257,10 @@ Each tool's config is mounted to `/home/agent/` inside the container.
 
 ```bash
 # View configuration paths for a specific tool
-npx @kokorolx/ai-sandbox-wrapper config tool claude
+npx @nano-step/ai-sandbox-wrapper config tool claude
 
 # View configuration content
-npx @kokorolx/ai-sandbox-wrapper config tool claude --show
+npx @nano-step/ai-sandbox-wrapper config tool claude --show
 ```
 
 ## Common Usage Patterns
@@ -313,10 +313,10 @@ All tools share the same workspace and Git access configuration:
 
 ```bash
 # Workspace management
-npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/my-app
+npx @nano-step/ai-sandbox-wrapper workspace add ~/projects/my-app
 
 # Git access management
-npx @kokorolx/ai-sandbox-wrapper git enable ~/projects/myrepo
+npx @nano-step/ai-sandbox-wrapper git enable ~/projects/myrepo
 ```
 
 See [README.md](README.md) for detailed configuration instructions.

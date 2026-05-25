@@ -46,7 +46,7 @@ Examples:
   ai-run aider -n mynetwork               # Connect to Docker network
   ai-run opencode --git-fetch             # Git fetch only (no push)
 
-Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
+Documentation: https://github.com/nano-step/ai-sandbox-wrapper
 EOF
   exit 0
 }
@@ -932,7 +932,7 @@ migrate_to_unified_home() {
   if [[ $migrated_count -gt 0 ]]; then
     echo "✅ Migration complete! Merged $migrated_count tool home directories."
     echo ""
-    echo "ℹ️  Old per-tool home directories preserved. Run 'npx @kokorolx/ai-sandbox-wrapper clean' to remove them."
+    echo "ℹ️  Old per-tool home directories preserved. Run 'npx @nano-step/ai-sandbox-wrapper clean' to remove them."
   fi
 }
 
@@ -2998,7 +2998,7 @@ if [[ "$TOOL" == "openclaw" ]]; then
 
   if [[ ! -d "$OPENCLAW_REPO_DIR" ]]; then
     echo "❌ ERROR: OpenClaw repository not found at $OPENCLAW_REPO_DIR"
-    echo "   Run: npx @kokorolx/ai-sandbox-wrapper setup"
+    echo "   Run: npx @nano-step/ai-sandbox-wrapper setup"
     exit 1
   fi
 

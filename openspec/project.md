@@ -75,6 +75,6 @@ Docker-based security sandbox for AI coding agents. Isolates AI tools (Claude, G
 ## External Dependencies
 - **Docker Engine/Desktop**: Required runtime (user must install separately)
 - **GitLab Container Registry**: `registry.gitlab.com/kokorolee/ai-sandbox-wrapper/` hosts pre-built images
-- **npm Registry**: Package published as `@kokorolx/ai-sandbox-wrapper`
-- **GitHub**: Source repository at `github.com/kokorolx/ai-sandbox-wrapper`
+- **npm Registry**: Package published as `@nano-step/ai-sandbox-wrapper`
+- **GitHub**: Source repository at `github.com/nano-step/ai-sandbox-wrapper`
 - **Tool-specific APIs**: Each AI tool may require its own API key (Anthropic, OpenAI, Google, etc.)

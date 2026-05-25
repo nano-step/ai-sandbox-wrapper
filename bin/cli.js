@@ -17,7 +17,7 @@ function showHelp() {
 🔒 AI Sandbox Wrapper
 
 Usage:
-  npx @kokorolx/ai-sandbox-wrapper <command> [options]
+  npx @nano-step/ai-sandbox-wrapper <command> [options]
 
 Commands:
   setup                 Run interactive setup (configure workspaces, select tools)
@@ -52,18 +52,18 @@ Options:
   --workspace   Apply to specific workspace (for network commands)
 
 Examples:
-  npx @kokorolx/ai-sandbox-wrapper setup
-  npx @kokorolx/ai-sandbox-wrapper rebuild
-  npx @kokorolx/ai-sandbox-wrapper rebuild --fresh
-  npx @kokorolx/ai-sandbox-wrapper update
-  npx @kokorolx/ai-sandbox-wrapper config show --json
-  npx @kokorolx/ai-sandbox-wrapper config tool claude
-  npx @kokorolx/ai-sandbox-wrapper config tool opencode --show
-  npx @kokorolx/ai-sandbox-wrapper workspace add ~/projects/myapp
-  npx @kokorolx/ai-sandbox-wrapper git enable ~/projects/myrepo
-  npx @kokorolx/ai-sandbox-wrapper network add mynetwork --global
+  npx @nano-step/ai-sandbox-wrapper setup
+  npx @nano-step/ai-sandbox-wrapper rebuild
+  npx @nano-step/ai-sandbox-wrapper rebuild --fresh
+  npx @nano-step/ai-sandbox-wrapper update
+  npx @nano-step/ai-sandbox-wrapper config show --json
+  npx @nano-step/ai-sandbox-wrapper config tool claude
+  npx @nano-step/ai-sandbox-wrapper config tool opencode --show
+  npx @nano-step/ai-sandbox-wrapper workspace add ~/projects/myapp
+  npx @nano-step/ai-sandbox-wrapper git enable ~/projects/myrepo
+  npx @nano-step/ai-sandbox-wrapper network add mynetwork --global
 
-Documentation: https://github.com/kokorolx/ai-sandbox-wrapper
+Documentation: https://github.com/nano-step/ai-sandbox-wrapper
 `);
 }
 
@@ -126,7 +126,7 @@ function runRebuild() {
 
   if (toolsInstalled.length === 0) {
     console.error('❌ No tools found in ~/.ai-sandbox/config.json');
-    console.error('   Run `npx @kokorolx/ai-sandbox-wrapper setup` first.');
+    console.error('   Run `npx @nano-step/ai-sandbox-wrapper setup` first.');
     process.exit(1);
   }
 
@@ -393,7 +393,7 @@ const TOOL_CONFIG_MAP = {
 async function runConfigTool(toolName, showContent) {
   if (!toolName) {
     console.error('❌ Please provide a tool name');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper config tool <tool> [--show]');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper config tool <tool> [--show]');
     process.exit(1);
   }
 
@@ -447,7 +447,7 @@ async function runConfigTool(toolName, showContent) {
       console.error(`❌ Error reading config: ${err.message}`);
     }
   } else {
-    console.log(`\nTo view content, run: npx @kokorolx/ai-sandbox-wrapper config tool ${toolName} --show`);
+    console.log(`\nTo view content, run: npx @nano-step/ai-sandbox-wrapper config tool ${toolName} --show`);
   }
   console.log('');
 }
@@ -462,7 +462,7 @@ function runWorkspaceList() {
   console.log('\n📁 Whitelisted Workspaces:\n');
   if (workspaces.length === 0) {
     console.log('  (none configured)');
-    console.log('\n  Add a workspace: npx @kokorolx/ai-sandbox-wrapper workspace add <path>');
+    console.log('\n  Add a workspace: npx @nano-step/ai-sandbox-wrapper workspace add <path>');
   } else {
     workspaces.forEach((ws, i) => console.log(`  ${i + 1}. ${ws}`));
   }
@@ -472,7 +472,7 @@ function runWorkspaceList() {
 function runWorkspaceAdd(inputPath) {
   if (!inputPath) {
     console.error('❌ Please provide a workspace path');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper workspace add <path>');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper workspace add <path>');
     process.exit(1);
   }
 
@@ -502,7 +502,7 @@ function runWorkspaceAdd(inputPath) {
 function runWorkspaceRemove(inputPath) {
   if (!inputPath) {
     console.error('❌ Please provide a workspace path');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper workspace remove <path>');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper workspace remove <path>');
     process.exit(1);
   }
 
@@ -542,7 +542,7 @@ function runGitStatus() {
   console.log('\n🔐 Git-Enabled Workspaces:\n')
   if (allowed.length === 0 && fetchOnly.length === 0) {
     console.log('  (no workspaces with git access)')
-    console.log('\n  Enable git: npx @kokorolx/ai-sandbox-wrapper git enable <workspace-path>')
+    console.log('\n  Enable git: npx @nano-step/ai-sandbox-wrapper git enable <workspace-path>')
   } else {
     if (allowed.length > 0) {
       console.log('  Full access:')
@@ -559,7 +559,7 @@ function runGitStatus() {
 function runGitEnable(inputPath) {
   if (!inputPath) {
     console.error('❌ Please provide a workspace path');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git enable <path>');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper git enable <path>');
     process.exit(1);
   }
 
@@ -590,7 +590,7 @@ function runGitEnable(inputPath) {
 function runGitDisable(inputPath) {
   if (!inputPath) {
     console.error('❌ Please provide a workspace path');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git disable <path>');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper git disable <path>');
     process.exit(1);
   }
 
@@ -625,7 +625,7 @@ function runGitDisable(inputPath) {
 function runGitFetchOnly(inputPath) {
   if (!inputPath) {
     console.error('❌ Please provide a workspace path')
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git fetch-only <path>')
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper git fetch-only <path>')
     process.exit(1)
   }
 
@@ -655,7 +655,7 @@ function runGitFetchOnly(inputPath) {
 function runGitFull(inputPath) {
   if (!inputPath) {
     console.error('❌ Please provide a workspace path')
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git full <path>')
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper git full <path>')
     process.exit(1)
   }
 
@@ -715,7 +715,7 @@ function runNetworkList() {
 function runNetworkAdd(name, isGlobal, workspacePath) {
   if (!name) {
     console.error('❌ Please provide a network name');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper network add <name> [--global|--workspace <path>]');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper network add <name> [--global|--workspace <path>]');
     process.exit(1);
   }
 
@@ -748,7 +748,7 @@ function runNetworkAdd(name, isGlobal, workspacePath) {
 function runNetworkRemove(name, isGlobal, workspacePath) {
   if (!name) {
     console.error('❌ Please provide a network name');
-    console.error('Usage: npx @kokorolx/ai-sandbox-wrapper network remove <name> [--global|--workspace <path>]');
+    console.error('Usage: npx @nano-step/ai-sandbox-wrapper network remove <name> [--global|--workspace <path>]');
     process.exit(1);
   }
 
@@ -1416,8 +1416,8 @@ switch (command) {
       runConfigTool(subArg, hasShowFlag);
     } else {
       console.error('Usage:');
-      console.error('  npx @kokorolx/ai-sandbox-wrapper config show [--json]');
-      console.error('  npx @kokorolx/ai-sandbox-wrapper config tool <tool> [--show]');
+      console.error('  npx @nano-step/ai-sandbox-wrapper config show [--json]');
+      console.error('  npx @nano-step/ai-sandbox-wrapper config tool <tool> [--show]');
       process.exit(1);
     }
     break;
@@ -1433,7 +1433,7 @@ switch (command) {
         runWorkspaceRemove(subArg);
         break;
       default:
-        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper workspace <list|add|remove> [path]');
+        console.error('Usage: npx @nano-step/ai-sandbox-wrapper workspace <list|add|remove> [path]');
         process.exit(1);
     }
     break;
@@ -1455,7 +1455,7 @@ switch (command) {
         runGitFull(subArg)
         break
       default:
-        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper git <status|enable|disable|fetch-only|full> [path]')
+        console.error('Usage: npx @nano-step/ai-sandbox-wrapper git <status|enable|disable|fetch-only|full> [path]')
         process.exit(1)
     }
     break;
@@ -1471,7 +1471,7 @@ switch (command) {
         runNetworkRemove(subArg, hasGlobalFlag, workspaceArg);
         break;
       default:
-        console.error('Usage: npx @kokorolx/ai-sandbox-wrapper network <list|add|remove> [name] [--global|--workspace <path>]');
+        console.error('Usage: npx @nano-step/ai-sandbox-wrapper network <list|add|remove> [name] [--global|--workspace <path>]');
         process.exit(1);
     }
     break;
