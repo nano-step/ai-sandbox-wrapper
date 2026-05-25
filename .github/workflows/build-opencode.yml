@@ -16,30 +16,19 @@ on:
       - ".github/workflows/build-opencode.yml"
       - "dockerfiles/opencode/**"
       - "dockerfiles/base/**"
-  workflow_dispatch:
-    inputs:
-      preset:
-        description: "Which preset to build (leave empty for all)"
-        required: false
-        type: choice
-        default: ""
-        options:
-          - ""
-          - base
-          - full
+  workflow_dispatch: {}
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [base, full]
-    if: >-
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.preset == '' ||
-      github.event.inputs.preset == matrix.preset
+  build-base:
     uses: ./.github/workflows/build-image.yml
     with:
       tool: opencode
-      preset: ${{ matrix.preset }}
+      preset: base
+    secrets: inherit
+
+  build-full:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      tool: opencode
+      preset: full
     secrets: inherit
