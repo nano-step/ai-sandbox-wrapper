@@ -12,6 +12,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.1.1] — 2026-05-25
+
+### Fixed
+- fix(ci): build-opencode.yml startup_failure (#22)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.1.1`
+
+---
+
 ## [5.1.0] — 2026-05-25
 
 ### Added
