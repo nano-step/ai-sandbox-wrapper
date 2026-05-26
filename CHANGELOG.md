@@ -17,6 +17,24 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.3.0] — 2026-05-26
+
+### Added
+- feat(setup): show push date alongside each ghcr.io tag
+- feat(setup): add image source menu — pull from ghcr.io or build local
+
+### Fixed
+- fix(setup): graceful fallback when ghcr.io tag fetch fails, guide user to gh auth login
+- fix(setup): fix ghcr.io bearer token auth for tag fetching
+
+### Documentation
+- docs(readme): update Quick Start and Pre-built Images for v5.2.x setup flow
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.3.0`
+
+---
+
 ## [5.1.5] — 2026-05-25
 
 ### Documentation
