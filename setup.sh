@@ -325,16 +325,22 @@ if [[ "$IMAGE_SOURCE" == "registry" ]]; then
 
   AVAILABLE_TAGS=""
   if AVAILABLE_TAGS=$(fetch_ghcr_tags 2>/dev/null) && [[ -n "$AVAILABLE_TAGS" ]]; then
-    TAG_OPTIONS=$(echo "$AVAILABLE_TAGS" | cut -f1 | tr '\n' ',' | sed 's/,$//')
-    TAG_DESCS=$(echo "$AVAILABLE_TAGS" | while IFS=$'\t' read -r tag date; do
+    TAG_OPTIONS=""
+    TAG_DESCS=""
+    while read -r line; do
+      tag=$(echo "$line" | cut -f1)
+      date=$(echo "$line" | cut -f2)
+      [[ -z "$tag" ]] && continue
+      TAG_OPTIONS="${TAG_OPTIONS:+${TAG_OPTIONS},}${tag}"
       case "$tag" in
-        base)    echo "Recommended - coding tools + MCP browser (pushed: ${date})" ;;
-        full)    echo "base + standalone Playwright + Open Design (pushed: ${date})" ;;
-        *-sha-*) echo "Pinned commit ${tag##*-sha-} (pushed: ${date})" ;;
-        *-v*)    echo "Release (pushed: ${date})" ;;
-        *)       echo "pushed: ${date}" ;;
+        base)    desc="Recommended - coding tools + MCP browser (pushed: ${date})" ;;
+        full)    desc="base + standalone Playwright + Open Design (pushed: ${date})" ;;
+        *-sha-*) desc="Pinned commit ${tag##*-sha-} (pushed: ${date})" ;;
+        *-v*)    desc="Release (pushed: ${date})" ;;
+        *)       desc="pushed: ${date}" ;;
       esac
-    done | tr '\n' ',' | sed 's/,$//')
+      TAG_DESCS="${TAG_DESCS:+${TAG_DESCS},}${desc}"
+    done <<< "$AVAILABLE_TAGS"
 
     single_select "Select image tag" "$TAG_OPTIONS" "$TAG_DESCS"
     SELECTED_TAG="$SELECTED_ITEM"
