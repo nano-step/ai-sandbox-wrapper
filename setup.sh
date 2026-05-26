@@ -280,6 +280,133 @@ echo "📁 Legacy workspaces file: $WORKSPACES_FILE"
 # Use first workspace as default for backwards compatibility
 WORKSPACE="${WORKSPACES[0]}"
 
+# ============================================================================
+# IMAGE SOURCE SELECTION
+# ============================================================================
+
+# Fetch available tags from ghcr.io (requires gh auth or docker login)
+fetch_ghcr_tags() {
+  local image="nano-step/ai-opencode"
+  local registry="ghcr.io"
+
+  # Try gh auth token first
+  local token=""
+  if command -v gh &>/dev/null; then
+    token=$(gh auth token 2>/dev/null || true)
+  fi
+
+  if [[ -z "$token" ]]; then
+    return 1
+  fi
+
+  # Get bearer token from ghcr.io
+  local bearer
+  bearer=$(curl -sf -u "$(gh api user --jq .login 2>/dev/null):${token}" \
+    "https://${registry}/token?scope=repository:${image}:pull&service=${registry}" \
+    | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+
+  if [[ -z "$bearer" ]]; then
+    return 1
+  fi
+
+  # Fetch tags list
+  local tags
+  tags=$(curl -sf -H "Authorization: Bearer ${bearer}" \
+    "https://${registry}/v2/${image}/tags/list" \
+    | grep -o '"tags":\[[^]]*\]' \
+    | grep -o '"[^"]*"' \
+    | tr -d '"' \
+    | grep -v '^tags$' \
+    | sort -V)
+
+  if [[ -z "$tags" ]]; then
+    return 1
+  fi
+
+  echo "$tags"
+}
+
+# Menu: choose image source
+single_select "Image Source" \
+  "registry,local" \
+  "Use pre-built image from ghcr.io (fast ~1 min),Build image locally from Dockerfile (~10-20 min)"
+IMAGE_SOURCE="$SELECTED_ITEM"
+
+if [[ "$IMAGE_SOURCE" == "registry" ]]; then
+  REGISTRY_IMAGE="ghcr.io/nano-step/ai-opencode"
+  SELECTED_TAG=""
+
+  echo ""
+  echo "🔄 Fetching available tags from ghcr.io..."
+
+  AVAILABLE_TAGS=""
+  if AVAILABLE_TAGS=$(fetch_ghcr_tags 2>/dev/null) && [[ -n "$AVAILABLE_TAGS" ]]; then
+    # Build options/descriptions for single_select
+    TAG_OPTIONS=$(echo "$AVAILABLE_TAGS" | tr '\n' ',' | sed 's/,$//')
+    TAG_DESCS=$(echo "$AVAILABLE_TAGS" | while IFS= read -r tag; do
+      case "$tag" in
+        base)   echo "Recommended - coding tools, MCP browser (no standalone Playwright)" ;;
+        full)   echo "Everything in base + standalone Playwright + Open Design helpers" ;;
+        *-sha-*) echo "Pinned to commit ${tag##*-sha-}" ;;
+        *-v*)   echo "Version release" ;;
+        *)      echo "$REGISTRY_IMAGE:$tag" ;;
+      esac
+    done | tr '\n' ',' | sed 's/,$//')
+
+    single_select "Select image tag" "$TAG_OPTIONS" "$TAG_DESCS"
+    SELECTED_TAG="$SELECTED_ITEM"
+  else
+    echo "⚠️  Could not fetch tags (need: gh auth login + write:packages scope)"
+    echo "   Falling back to manual selection."
+    single_select "Select image tag" \
+      "base,full" \
+      "Recommended - coding tools + MCP browser (~2.3GB),Full image with standalone Playwright (~2.7GB)"
+    SELECTED_TAG="$SELECTED_ITEM"
+  fi
+
+  FULL_IMAGE="${REGISTRY_IMAGE}:${SELECTED_TAG}"
+  echo ""
+  echo "📦 Pulling ${FULL_IMAGE}..."
+  docker pull "${FULL_IMAGE}"
+  docker tag "${FULL_IMAGE}" ai-sandbox:latest
+  echo "✅ Image pulled and tagged as ai-sandbox:latest"
+
+  # Generate ai-run wrapper and shell aliases (skip build)
+  if [[ -n "$AI_SANDBOX_ROOT" ]]; then
+    SCRIPT_DIR="$AI_SANDBOX_ROOT"
+  else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  fi
+
+  # Save tools list to config (use all known tools for aliases)
+  TOOLS=("opencode")
+  mkdir -p "$HOME/bin"
+  bash "$SCRIPT_DIR/lib/generate-ai-run.sh"
+
+  SHELL_RC="$HOME/.zshrc"
+  if ! grep -q 'export PATH="\$HOME/bin:\$PATH"' "$SHELL_RC" 2>/dev/null; then
+    echo "export PATH=\"\$HOME/bin:\$PATH\"" >> "$SHELL_RC"
+  fi
+  for tool in "${TOOLS[@]}"; do
+    if ! grep -q "alias $tool=" "$SHELL_RC" 2>/dev/null; then
+      echo "alias $tool=\"ai-run $tool\"" >> "$SHELL_RC"
+    fi
+  done
+  if ! grep -q 'alias ai=' "$SHELL_RC" 2>/dev/null; then
+    echo 'alias ai="ai-run"' >> "$SHELL_RC"
+  fi
+
+  echo ""
+  echo "✅ Setup complete!"
+  echo "📦 Image: ai-sandbox:latest (pulled from ${FULL_IMAGE})"
+  echo ""
+  echo "➡ Restart terminal or run: source ~/.zshrc"
+  echo "➡ Add API keys to: $ENV_FILE"
+  exit 0
+fi
+
+# --- local build path continues below ---
+
 # Tool definitions
 TOOL_OPTIONS="amp,opencode,openclaw,open-design,droid,claude,gemini,kilo,qwen,codex,qoder,auggie,codebuddy,jules,shai"
 TOOL_DESCS="AI coding assistant from @sourcegraph/amp,Open-source coding tool from opencode-ai,OpenClaw AI gateway (Docker Compose),Open Design daemon (HTTP service — agent-driven design generation),Factory CLI from factory.ai,Claude Code CLI from Anthropic,Google Gemini CLI (free tier),AI pair programmer (Git-native),Kilo Code (500+ models),Alibaba Qwen CLI (1M context),OpenAI Codex terminal agent,Qoder AI CLI assistant,Augment Auggie CLI,Tencent CodeBuddy CLI,Google Jules CLI,OVHcloud SHAI agent"
