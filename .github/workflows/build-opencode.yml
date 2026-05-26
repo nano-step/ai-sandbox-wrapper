@@ -30,6 +30,7 @@ jobs:
     secrets: inherit
 
   build-full:
+    needs: build-base
     permissions:
       contents: read
       packages: write
