@@ -98,7 +98,12 @@ source ~/.zshrc
 opencode
 ```
 
-During setup: select **opencode**, choose registry images (faster), whitelist your project directories.
+During setup you will be asked:
+1. **Image source** — pull pre-built from `ghcr.io` (1-2 min) or build locally (~10-20 min)
+   - If you choose registry, setup fetches the available tags and lets you pick one (requires `gh auth login`)
+   - If `gh` is not authenticated, setup falls back to showing `base` / `full` options
+2. **Tools** — select which AI tools to install (opencode, claude, amp, etc.)
+3. **Workspaces** — whitelist your project directories
 
 ---
 
@@ -303,37 +308,34 @@ Skills are copied to `~/.config/opencode/skills/` and available immediately.
 
 ### Pre-built Images from ghcr.io
 
-Skip the 10-20 minute local build by pulling pre-built `ai-opencode` images from GitHub Container Registry. Default pull target is **`ghcr.io/nano-step/ai-opencode:base`**.
+Setup automatically asks whether to pull a pre-built image or build locally. Pulling is faster (1-2 min vs 10-20 min).
+
+**During `npx @nano-step/ai-sandbox-wrapper setup`:**
+1. Choose **"Use pre-built image from ghcr.io"**
+2. Setup fetches available tags and shows push dates — pick one (requires `gh auth login`)
+3. If not authenticated with `gh`, setup shows `base` / `full` as fallback options
+4. The pulled image is tagged as `ai-sandbox:latest` and ready to use
 
 ```bash
-# Default pull — :base variant
-AI_IMAGE_SOURCE=registry ai-run opencode
+# Authenticate gh to see all available tags with push dates
+gh auth login
+gh auth refresh --scopes read:packages
 
-# :full variant (superset of base; see comparison below)
-AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=full ai-run opencode
-
-# Pin to a specific version (semver from package.json)
-AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=base-v5.1.3 ai-run opencode
-
-# Pin to an exact commit
-AI_IMAGE_SOURCE=registry AI_IMAGE_TAG=base-sha-2e6a0c4 ai-run opencode
-
-# Override the registry entirely (e.g. fall back to GitLab)
-AI_IMAGE_SOURCE=registry \
-  AI_IMAGE_REGISTRY=registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-sandbox \
-  AI_IMAGE_TAG=latest \
-  ai-run opencode
+# Then run setup
+npx @nano-step/ai-sandbox-wrapper setup
 ```
 
-**Environment variables**:
-- `AI_IMAGE_SOURCE=registry` — opt in to registry pull (default: `local`, builds locally).
-- `AI_IMAGE_REGISTRY` — override registry path (default: `ghcr.io/nano-step/ai-opencode`).
-- `AI_IMAGE_TAG` — choose preset or pinned version (default: `base`).
-
 **Tag formats**:
-- `<preset>` — rolling latest (e.g. `:base`, `:full`). **← `ai-run` default = `:base`.**
-- `<preset>-sha-<short>` — immutable per commit (e.g. `:base-sha-2e6a0c4`).
-- `<preset>-v<version>` — semver from `package.json` (e.g. `:base-v5.1.3`).
+- `base` / `full` — rolling latest, always up to date
+- `base-sha-<short>` / `full-sha-<short>` — pinned to a specific commit
+- `base-v<version>` / `full-v<version>` — pinned to a semver release
+
+**Advanced — pull manually without setup:**
+
+```bash
+docker pull ghcr.io/nano-step/ai-opencode:base
+docker tag ghcr.io/nano-step/ai-opencode:base ai-sandbox:latest
+```
 
 #### Image contents — what's inside each variant
 
