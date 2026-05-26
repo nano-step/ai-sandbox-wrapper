@@ -331,7 +331,7 @@ if [[ "$IMAGE_SOURCE" == "registry" ]]; then
         base)    echo "Recommended - coding tools + MCP browser (pushed: ${date})" ;;
         full)    echo "base + standalone Playwright + Open Design (pushed: ${date})" ;;
         *-sha-*) echo "Pinned commit ${tag##*-sha-} (pushed: ${date})" ;;
-        *-v*)    echo "Release ${tag##*-v*} (pushed: ${date})" ;;
+        *-v*)    echo "Release (pushed: ${date})" ;;
         *)       echo "pushed: ${date}" ;;
       esac
     done | tr '\n' ',' | sed 's/,$//')
@@ -339,11 +339,20 @@ if [[ "$IMAGE_SOURCE" == "registry" ]]; then
     single_select "Select image tag" "$TAG_OPTIONS" "$TAG_DESCS"
     SELECTED_TAG="$SELECTED_ITEM"
   else
-    echo "⚠️  Could not fetch tags (need: gh auth login + write:packages scope)"
-    echo "   Falling back to manual selection."
+    tput cnorm
+    echo ""
+    echo "⚠️  Could not fetch tag list from ghcr.io."
+    echo "   GitHub Packages API requires authentication even for public images."
+    echo ""
+    echo "   To see all available tags, run:"
+    echo "     gh auth login"
+    echo "   then re-run setup."
+    echo ""
+    echo "   Continuing with known stable tags:"
+    echo ""
     single_select "Select image tag" \
       "base,full" \
-      "Recommended - coding tools + MCP browser (~2.3GB),Full image with standalone Playwright (~2.7GB)"
+      "Recommended - coding tools + MCP browser (~2.3GB),base + standalone Playwright + Open Design (~2.7GB)"
     SELECTED_TAG="$SELECTED_ITEM"
   fi
 
