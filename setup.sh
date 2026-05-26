@@ -289,34 +289,28 @@ fetch_ghcr_tags() {
   local image="nano-step/ai-opencode"
   local registry="ghcr.io"
 
-  # Try gh auth token first
-  local token=""
-  if command -v gh &>/dev/null; then
-    token=$(gh auth token 2>/dev/null || true)
-  fi
-
-  if [[ -z "$token" ]]; then
+  if ! command -v gh &>/dev/null; then
     return 1
   fi
 
-  # Get bearer token from ghcr.io
+  local gh_user gh_token
+  gh_user=$(gh api user --jq .login 2>/dev/null) || return 1
+  gh_token=$(gh auth token 2>/dev/null) || return 1
+
   local bearer
-  bearer=$(curl -sf -u "$(gh api user --jq .login 2>/dev/null):${token}" \
+  bearer=$(curl -sf -u "${gh_user}:${gh_token}" \
     "https://${registry}/token?scope=repository:${image}:pull&service=${registry}" \
-    | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    | jq -r '.token // empty' 2>/dev/null)
 
   if [[ -z "$bearer" ]]; then
     return 1
   fi
 
-  # Fetch tags list
   local tags
   tags=$(curl -sf -H "Authorization: Bearer ${bearer}" \
     "https://${registry}/v2/${image}/tags/list" \
-    | grep -o '"tags":\[[^]]*\]' \
-    | grep -o '"[^"]*"' \
-    | tr -d '"' \
-    | grep -v '^tags$' \
+    | jq -r '.tags[] // empty' 2>/dev/null \
+    | grep -v '\-amd64$\|\-arm64$' \
     | sort -V)
 
   if [[ -z "$tags" ]]; then
