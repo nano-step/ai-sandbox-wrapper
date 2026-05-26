@@ -286,38 +286,28 @@ WORKSPACE="${WORKSPACES[0]}"
 
 # Fetch available tags from ghcr.io (requires gh auth or docker login)
 fetch_ghcr_tags() {
-  local image="nano-step/ai-opencode"
-  local registry="ghcr.io"
-
   if ! command -v gh &>/dev/null; then
     return 1
   fi
 
-  local gh_user gh_token
-  gh_user=$(gh api user --jq .login 2>/dev/null) || return 1
+  local gh_token
   gh_token=$(gh auth token 2>/dev/null) || return 1
 
-  local bearer
-  bearer=$(curl -sf -u "${gh_user}:${gh_token}" \
-    "https://${registry}/token?scope=repository:${image}:pull&service=${registry}" \
-    | jq -r '.token // empty' 2>/dev/null)
+  local versions
+  versions=$(curl -sf \
+    -H "Authorization: Bearer ${gh_token}" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/orgs/nano-step/packages/container/ai-opencode/versions?per_page=50" \
+    2>/dev/null) || return 1
 
-  if [[ -z "$bearer" ]]; then
-    return 1
-  fi
-
-  local tags
-  tags=$(curl -sf -H "Authorization: Bearer ${bearer}" \
-    "https://${registry}/v2/${image}/tags/list" \
-    | jq -r '.tags[] // empty' 2>/dev/null \
+  echo "$versions" \
+    | jq -r '.[] | select(.metadata.container.tags | length > 0) | .updated_at as $date | .metadata.container.tags[] | "\(.) \($date)"' \
     | grep -v '\-amd64$\|\-arm64$' \
-    | sort -V)
-
-  if [[ -z "$tags" ]]; then
-    return 1
-  fi
-
-  echo "$tags"
+    | sort -t' ' -k1V \
+    | awk '{
+        tag=$1; date=substr($2,1,10);
+        printf "%s\t%s\n", tag, date
+      }'
 }
 
 # Menu: choose image source
@@ -335,15 +325,14 @@ if [[ "$IMAGE_SOURCE" == "registry" ]]; then
 
   AVAILABLE_TAGS=""
   if AVAILABLE_TAGS=$(fetch_ghcr_tags 2>/dev/null) && [[ -n "$AVAILABLE_TAGS" ]]; then
-    # Build options/descriptions for single_select
-    TAG_OPTIONS=$(echo "$AVAILABLE_TAGS" | tr '\n' ',' | sed 's/,$//')
-    TAG_DESCS=$(echo "$AVAILABLE_TAGS" | while IFS= read -r tag; do
+    TAG_OPTIONS=$(echo "$AVAILABLE_TAGS" | cut -f1 | tr '\n' ',' | sed 's/,$//')
+    TAG_DESCS=$(echo "$AVAILABLE_TAGS" | while IFS=$'\t' read -r tag date; do
       case "$tag" in
-        base)   echo "Recommended - coding tools, MCP browser (no standalone Playwright)" ;;
-        full)   echo "Everything in base + standalone Playwright + Open Design helpers" ;;
-        *-sha-*) echo "Pinned to commit ${tag##*-sha-}" ;;
-        *-v*)   echo "Version release" ;;
-        *)      echo "$REGISTRY_IMAGE:$tag" ;;
+        base)    echo "Recommended - coding tools + MCP browser (pushed: ${date})" ;;
+        full)    echo "base + standalone Playwright + Open Design (pushed: ${date})" ;;
+        *-sha-*) echo "Pinned commit ${tag##*-sha-} (pushed: ${date})" ;;
+        *-v*)    echo "Release ${tag##*-v*} (pushed: ${date})" ;;
+        *)       echo "pushed: ${date}" ;;
       esac
     done | tr '\n' ',' | sed 's/,$//')
 
