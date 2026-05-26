@@ -32,7 +32,8 @@ mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 
 if [[ -n "$OPENCODE_VERSION" ]]; then
   cat > "dockerfiles/$TOOL/Dockerfile" <<EOF
-FROM ai-base:latest
+ARG BASE_IMAGE=ai-base:latest
+FROM \${BASE_IMAGE}
 
 USER root
 ENV HOME=/root
@@ -46,7 +47,8 @@ ENTRYPOINT ["opencode"]
 EOF
 else
   cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
-FROM ai-base:latest
+ARG BASE_IMAGE=ai-base:latest
+FROM ${BASE_IMAGE}
 
 USER root
 ENV HOME=/root
