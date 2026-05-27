@@ -37,6 +37,57 @@ AI_RUN_PLATFORM=linux/arm64 ai-run opencode  # For ARM
 AI_RUN_PLATFORM=linux/amd64 ai-run opencode  # For Intel
 ```
 
+##### Sub-case: Stale `AI_RUN_PLATFORM` after switching images
+
+**Symptom:** `ai-run` fails immediately with:
+
+```
+docker: Error response from daemon: image with reference ghcr.io/nano-step/ai-opencode:base
+was found but does not provide the specified platform (linux/amd64)
+```
+
+…even though `uname -m` returns `arm64` and `docker inspect <image> --format '{{.Architecture}}'` confirms the image is `arm64`-native.
+
+**Cause:** `AI_RUN_PLATFORM=linux/amd64` is still exported in your shell — most often because:
+
+1. A previous `setup.sh` run wrote it to `~/.zshrc` or `~/.zshenv` and you didn't notice.
+2. You exported it manually for a one-off cross-arch test and forgot to `unset` it.
+3. Your terminal is running under Rosetta translation, so `uname -m` returns `x86_64` and `ai-run` auto-detects `linux/amd64` ([bin/ai-run](bin/ai-run) `PLATFORM` block).
+
+`ai-run` then passes `--platform $AI_RUN_PLATFORM` to `docker run` unconditionally. If the image manifest does not include that platform, Docker refuses to start the container.
+
+**Check:**
+```bash
+# Is it set in the current shell?
+echo "AI_RUN_PLATFORM=[$AI_RUN_PLATFORM]"
+
+# Is it in any rc file?
+grep -nE 'AI_RUN_PLATFORM|DOCKER_DEFAULT_PLATFORM' \
+  ~/.zshrc ~/.zshenv ~/.zprofile ~/.bashrc ~/.bash_profile 2>/dev/null
+
+# Is your terminal Rosetta-translated? On Apple Silicon, this should return arm64:
+uname -m
+```
+
+**Solution:**
+```bash
+# 1. Strip from all shell config files (BSD sed on macOS)
+sed -i '' '/AI_RUN_PLATFORM/d;/DOCKER_DEFAULT_PLATFORM/d' \
+  ~/.zshrc ~/.zshenv ~/.zprofile 2>/dev/null
+
+# 2. Unset for the current shell
+unset AI_RUN_PLATFORM DOCKER_DEFAULT_PLATFORM
+
+# 3. Verify both sides are clean
+echo "AI_RUN_PLATFORM=[$AI_RUN_PLATFORM]"
+grep -nE 'AI_RUN_PLATFORM|DOCKER_DEFAULT_PLATFORM' ~/.zshrc ~/.zshenv ~/.zprofile 2>/dev/null
+
+# 4. Retry
+ai-run opencode -s
+```
+
+If `uname -m` returns `x86_64` on an Apple Silicon Mac, your terminal is Rosetta-translated. Quit your terminal app, uncheck "Open using Rosetta" in **Get Info**, relaunch, and re-test.
+
 #### 2. **Terminal Size Not Detected**
 
 **Symptom:** UI appears broken, text overflows, layout is corrupted
@@ -231,6 +282,62 @@ docker pull registry.gitlab.com/kokorolee/ai-sandbox-wrapper/ai-opencode:latest
 # Or rebuild locally
 ./setup.sh
 ```
+
+### Wrapper launches the wrong image version (e.g. `:full-v5.1.5` after installing `:base`)
+
+**Symptom:** You installed/pulled `:base` (or a newer version) but `ai-run` keeps launching the old `:full-vX.Y.Z` image. Pruning the image causes the next `ai-run` invocation to silently re-pull the wrong tag from `ghcr.io` and run it.
+
+**Cause:** Three independent overrides can each force `ai-run` onto a specific registry tag, in priority order:
+
+1. `AI_IMAGE_SOURCE=registry` + `AI_IMAGE_TAG=<old-tag>` exported in your shell
+   ([bin/ai-run](bin/ai-run) image selection block). These get written to `~/.zshrc` / `~/.zshenv` by `setup.sh` when you pick the "registry" path, and are **appended without dedup** on each setup run, so they accumulate as duplicate `export` lines.
+2. Stale container holding the old image alive — `ai-sandbox:latest` may already point at the new image, but a container from a prior session still references the old one, which is why `docker rmi` on the old image fails with `must be forced - container ... is using its referenced image`.
+3. Floating registry tags like `:full` and `:base` on `ghcr.io/nano-step/ai-opencode` lag behind npm wrapper releases. The wrapper at `@nano-step/ai-sandbox-wrapper@5.3.x` may pull a floating tag that still resolves to a `v5.1.x` manifest.
+
+**Check:**
+```bash
+# 1. What env vars are forcing the image?
+env | grep -E 'AI_IMAGE_|AI_SANDBOX_'
+grep -nE 'AI_IMAGE_|AI_SANDBOX_' ~/.zshrc ~/.zshenv ~/.zprofile ~/.ai-env 2>/dev/null
+
+# 2. What does ai-sandbox:latest actually point at?
+docker inspect ai-sandbox:latest --format \
+  '{{.Created}}  {{.RepoTags}}  {{.Architecture}}'
+
+# 3. Are there stale containers pinned to the old image?
+docker ps -a --filter "ancestor=<old-image-id>"
+
+# 4. Does the floating ghcr tag match the wrapper version you installed?
+docker manifest inspect ghcr.io/nano-step/ai-opencode:base \
+  | grep -E '"digest"|"architecture"'
+```
+
+**Solution:**
+```bash
+# 1. Strip the registry overrides from all shell config files (BSD sed on macOS)
+sed -i '' '/AI_IMAGE_SOURCE/d;/AI_IMAGE_TAG/d;/AI_IMAGE_REGISTRY/d;/AI_SANDBOX_IMAGE/d' \
+  ~/.zshrc ~/.zshenv ~/.zprofile ~/.ai-env 2>/dev/null
+
+# 2. Unset for the current shell
+unset AI_IMAGE_SOURCE AI_IMAGE_TAG AI_IMAGE_REGISTRY AI_SANDBOX_IMAGE
+
+# 3. Verify both sides are clean
+env | grep -E 'AI_IMAGE_|AI_SANDBOX_'   # must be empty
+grep -nE 'AI_IMAGE_|AI_SANDBOX_' ~/.zshrc ~/.zshenv ~/.zprofile ~/.ai-env 2>/dev/null   # empty
+
+# 4. Kill stale containers on the old image, then drop the old tags
+docker ps -a --filter "ancestor=<old-image-id>" -q | xargs -r docker rm -f
+docker rmi ghcr.io/nano-step/ai-opencode:full-vX.Y.Z 2>/dev/null
+docker image prune -f
+
+# 5. Confirm ai-sandbox:latest points at the desired image
+docker tag ghcr.io/nano-step/ai-opencode:base ai-sandbox:latest
+
+# 6. Retry
+ai-run opencode -s
+```
+
+With `AI_IMAGE_SOURCE` unset, `ai-run` falls back to `AI_IMAGE_SOURCE=local` and resolves the image as `ai-sandbox:latest` — the canonical local tag that `setup.sh` and `lib/pull-opencode-image.sh` both maintain.
 
 ### "Permission denied"
 ```bash
