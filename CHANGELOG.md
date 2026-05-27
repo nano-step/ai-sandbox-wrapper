@@ -18,6 +18,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.3.1] — 2026-05-26
+
+### Fixed
+- fix(setup): avoid IFS tab subshell bug when building tag menu
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.3.1`
+
+---
+
 ## [5.3.0] — 2026-05-26
 
 ### Added
