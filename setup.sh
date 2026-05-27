@@ -365,8 +365,17 @@ if [[ "$IMAGE_SOURCE" == "registry" ]]; then
   FULL_IMAGE="${REGISTRY_IMAGE}:${SELECTED_TAG}"
   echo ""
   echo "📦 Pulling ${FULL_IMAGE}..."
-  docker pull "${FULL_IMAGE}"
+  if ! docker pull "${FULL_IMAGE}"; then
+    echo ""
+    echo "❌ Failed to pull ${FULL_IMAGE}"
+    echo "   Check your internet connection and try again."
+    exit 1
+  fi
   docker tag "${FULL_IMAGE}" ai-sandbox:latest
+  if ! docker image inspect ai-sandbox:latest &>/dev/null; then
+    echo "❌ Image tag failed — ai-sandbox:latest not found after pull."
+    exit 1
+  fi
   echo "✅ Image pulled and tagged as ai-sandbox:latest"
 
   # Generate ai-run wrapper and shell aliases (skip build)
