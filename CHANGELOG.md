@@ -19,6 +19,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.3.2] — 2026-05-27
+
+### Fixed
+- fix(setup): fail loudly when registry image pull or tag fails
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.3.2`
+
+---
+
 ## [5.3.1] — 2026-05-26
 
 ### Fixed
