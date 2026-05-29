@@ -132,7 +132,7 @@ This works today for `~/.ai-sandbox/home` (mounted into `/home/agent` at `bin/ai
 ## Risks / Trade-offs
 
 - **[R1] Stopped containers accumulate in `docker ps -a` only briefly.** Since each new invocation removes the prior stopped container with the same name before running, only one stopped container per project ever exists. → Acceptable, no GC needed.
-- **[R2] Two simultaneous first invocations race past the "is it running?" check.** `docker run --name <X>` is atomic at the daemon level — second invocation fails with name conflict. → Mitigation: catch the error, fall through to exec.
+- **[R2] Two simultaneous first invocations race past the "is it running?" check.** `docker run --name <X>` is atomic at the daemon level — second invocation fails with name conflict. → Mitigation: catch the error, fall through to exec. **Accepted spec deviation:** the spec scenario "Name-conflict race resolved by retry" says "the user SHALL NOT see the raw docker error", but the implementation lets `docker run`'s stderr stream directly to preserve TTY allocation. The raw error is briefly visible (<1s) before the retry attaches. Suppressing it would require capturing stderr to a temp file, which interferes with `-it` TTY semantics. Trade-off accepted given how rare the race window is (~100ms between check and run, requiring concurrent first invocations).
 - **[R3] User has native opencode running on host during backup.** We `cp` (not move) so host opencode keeps its files. Mid-WAL state in the backup is still recoverable. → Document in release notes.
 - **[R4] git subprocess overhead.** ~10-30 ms per launch. Trivial vs `docker run` cost. → No optimization needed.
 - **[R5] 16-hex-char hash collision.** ≈2⁻⁶⁴ per pair. → None needed; document.

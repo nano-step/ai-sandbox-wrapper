@@ -2249,7 +2249,8 @@ opencode_container_running() {
 }
 
 # Print container ID if an opencode container exists but is stopped.
-# Returns empty string if no stopped container.
+# Prints nothing if no stopped container exists. Always returns 0 — caller
+# should check stdout rather than the return code.
 # Usage: opencode_container_stopped "ai-opencode-abc123"
 opencode_container_stopped() {
   local name="$1"
