@@ -1027,8 +1027,9 @@ done
 # concurrent-writer corruption. See openspec/changes/opencode-db-isolation/.
 # ============================================================================
 
-# Compute a deterministic 16-hex-char hash for the current workdir's project.
+# Compute a deterministic project identifier in the form <human>-<8-hex-hash>.
 # Resolver priority: git remote origin > git toplevel > realpath of workdir.
+# Hash guarantees uniqueness; human name aids debugging.
 # Usage: compute_opencode_project_hash "/path/to/workdir"
 compute_opencode_project_hash() {
   local workdir="$1"
@@ -1055,8 +1056,24 @@ compute_opencode_project_hash() {
     fi
   fi
 
-  # sha256 truncated to 16 hex chars
-  printf '%s' "$project_id" | openssl dgst -sha256 -r | cut -c1-16
+  # Compute 8-char hash from project_id (uniqueness guarantee)
+  local hash
+  hash=$(printf '%s' "$project_id" | openssl dgst -sha256 -r | cut -c1-8)
+
+  # Extract human-readable name from the SAME project_id source
+  # so that subdirectories of one project resolve to the same name+hash.
+  local human=""
+  case "$project_id" in
+    git:*)     human=$(echo "${project_id#git:}" | sed 's|.*/||; s|\.git$||') ;;
+    gitroot:*) human=$(basename "${project_id#gitroot:}") ;;
+    path:*)    human=$(basename "${project_id#path:}") ;;
+  esac
+  human=$(echo "$human" | tr ' ' '-' | tr -cd '[:alnum:]_-' | tr '[:upper:]' '[:lower:]' | cut -c1-30)
+  [[ -z "$human" ]] && human="workspace"
+
+  # Final identifier: <human-name>-<8-hex-hash>
+  # Human name aids debugging; hash guarantees uniqueness across same-name projects.
+  echo "${human}-${hash}"
 }
 
 # Print the host directory path for a given project hash's SQLite files.
@@ -1118,18 +1135,20 @@ ensure_opencode_backup() {
   fi
 }
 
-# Append the three per-project SQLite file bind mounts to DOCKER_ARGS.
-# Must be called AFTER the ~/.local/share/opencode directory mount is added.
+# Append the per-project SQLite db directory bind mount to DOCKER_ARGS.
+# Mounts the WHOLE per-project dir (not a single file) so SQLite can rename()
+# the .db during WAL checkpoint and create -wal/-shm siblings as real files.
+# A wrapper entrypoint symlinks ~/.local/share/opencode/opencode.db into this
+# directory before opencode starts.
 # Usage: append_opencode_db_mounts "abc123..."
 append_opencode_db_mounts() {
   local hash="$1"
   local db_dir
   db_dir=$(opencode_db_dir "$hash")
-  local container_base="/home/agent/.local/share/opencode"
 
-  for f in opencode.db opencode.db-wal opencode.db-shm; do
-    DOCKER_ARGS+=(-v "${db_dir}/${f}:${container_base}/${f}:delegated")
-  done
+  # Mount per-project DB dir into a dedicated path (NOT under ~/.local/share/opencode
+  # to avoid nested-mount weirdness on Docker Desktop / VirtioFS).
+  DOCKER_ARGS+=(-v "${db_dir}:/home/agent/.opencode-db-isolated:delegated")
 }
 
 setup_opencode_rg_compat() {
@@ -2241,30 +2260,33 @@ opencode_container_name() {
 }
 
 # Print container ID if an opencode container with the given name is running.
-# Returns empty string (and non-zero) if not running.
+# Returns 0 (and prints the ID) if running, 1 if not.
 # Usage: opencode_container_running "ai-opencode-abc123"
 opencode_container_running() {
   local name="$1"
-  docker ps -q -f "name=^${name}$" 2>/dev/null || true
+  local id
+  id=$(docker ps -q -f "name=^${name}$" 2>/dev/null)
+  if [[ -n "$id" ]]; then
+    echo "$id"
+    return 0
+  fi
+  return 1
 }
 
 # Print container ID if an opencode container exists but is stopped.
-# Prints nothing if no stopped container exists. Always returns 0 — caller
-# should check stdout rather than the return code.
+# Returns 0 (and prints the ID) if a stopped container exists, 1 otherwise.
 # Usage: opencode_container_stopped "ai-opencode-abc123"
 opencode_container_stopped() {
   local name="$1"
   local all_id
-  all_id=$(docker ps -aq -f "name=^${name}$" 2>/dev/null || true)
+  all_id=$(docker ps -aq -f "name=^${name}$" 2>/dev/null)
   if [[ -n "$all_id" ]]; then
-    local running_id
-    running_id=$(opencode_container_running "$name")
-    if [[ -z "$running_id" ]]; then
+    if ! opencode_container_running "$name" >/dev/null; then
       echo "$all_id"
       return 0
     fi
   fi
-  return 0
+  return 1
 }
 
 # Exec into an already-running opencode container.
@@ -2299,8 +2321,8 @@ exec_into_opencode_container() {
 # Usage: cleanup_stopped_opencode_container "ai-opencode-abc123"
 cleanup_stopped_opencode_container() {
   local name="$1"
-  local stopped_id
-  stopped_id=$(opencode_container_stopped "$name")
+  local stopped_id=""
+  stopped_id=$(opencode_container_stopped "$name") || true
   if [[ -n "$stopped_id" ]]; then
     docker rm "$name" >/dev/null 2>&1 || true
   fi
@@ -3084,9 +3106,22 @@ EOF
 # Prepare command based on mode
 ENTRYPOINT_OVERRIDE=""
 if [[ -n "$TOOL" && "$SHELL_MODE" != "true" ]]; then
-  # Direct tool execution: override entrypoint to the tool
-  ENTRYPOINT_OVERRIDE="--entrypoint $TOOL"
-  DOCKER_COMMAND=("${TOOL_ARGS[@]}")
+  if [[ "$TOOL" == "opencode" && -n "$OPENCODE_PROJECT_HASH" ]]; then
+    # OPENCODE DB ISOLATION: wrap entrypoint with bash to setup symlink
+    # from ~/.local/share/opencode/opencode.db → /home/agent/.opencode-db-isolated/opencode.db
+    # so SQLite WAL checkpoints / renames work on a real directory mount.
+    ENTRYPOINT_OVERRIDE="--entrypoint bash"
+    DOCKER_COMMAND=(
+      "-c"
+      'set -e; mkdir -p /home/agent/.opencode-db-isolated /home/agent/.local/share/opencode; ln -sf /home/agent/.opencode-db-isolated/opencode.db /home/agent/.local/share/opencode/opencode.db; exec opencode "$@"'
+      "opencode"
+      "${TOOL_ARGS[@]}"
+    )
+  else
+    # Direct tool execution: override entrypoint to the tool
+    ENTRYPOINT_OVERRIDE="--entrypoint $TOOL"
+    DOCKER_COMMAND=("${TOOL_ARGS[@]}")
+  fi
 elif [[ "$SHELL_MODE" == "true" || -z "$TOOL" ]]; then
   # Shell mode (explicit --shell or no tool specified)
   ENTRYPOINT_OVERRIDE="--entrypoint bash"
@@ -3272,7 +3307,8 @@ if [[ "$TOOL" == "opencode" ]]; then
   ensure_opencode_db_files "$OPENCODE_PROJECT_HASH"
 
   # 4. If a running container exists, exec into it and exit
-  local_running_id=$(opencode_container_running "$OPENCODE_CONTAINER_NAME")
+  local_running_id=""
+  local_running_id=$(opencode_container_running "$OPENCODE_CONTAINER_NAME") || true
   if [[ -n "$local_running_id" ]]; then
     exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
     exit $?
@@ -3393,10 +3429,15 @@ if [[ "$OPENCODE_SKIP_RM" == "true" ]]; then
   # Docker returns exit code 125 for daemon errors including name conflicts.
   # We run docker run directly (no output capture) to preserve TTY allocation,
   # then check if the failure was a name conflict by seeing if the container is now running.
-  docker run "${DOCKER_ARGS[@]}" && exit_code=0 || exit_code=$?
+  if docker run "${DOCKER_ARGS[@]}"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
   if [[ $exit_code -eq 125 ]]; then
     # Check if the container is now running (another invocation won the race)
-    _oc_race_check=$(opencode_container_running "$OPENCODE_CONTAINER_NAME")
+    _oc_race_check=""
+    _oc_race_check=$(opencode_container_running "$OPENCODE_CONTAINER_NAME") || true
     if [[ -n "$_oc_race_check" ]]; then
       echo "→ container name race detected, retrying via exec..." >&2
       exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
