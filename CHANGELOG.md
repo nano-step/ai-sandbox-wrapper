@@ -20,6 +20,25 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.4.0] — 2026-05-29
+
+### Added
+- feat(migrate): npx subcommand to split global opencode db into per-project dbs
+- feat(ai-run): human-readable db folder + dir-mount approach + bot review fixes
+- feat(ai-run): isolate opencode sqlite db per project
+
+### Fixed
+- fix(migrate): use ': >' instead of bare '>' to truncate plan file (SC2188)
+- fix(ai-run): drop overstrict workdir validation before docker exec
+
+### Documentation
+- docs(opencode-db): clarify stopped-check return semantics + accept race stderr leak
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.4.0`
+
+---
+
 ## [5.3.2] — 2026-05-27
 
 ### Fixed

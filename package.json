@@ -1,6 +1,6 @@
 {
   "name": "@nano-step/ai-sandbox-wrapper",
-  "version": "5.3.2",
+  "version": "5.4.0",
   "description": "Docker-based security sandbox for AI coding agents. Isolate Claude, Gemini, Aider, and other AI tools from your host system.",
   "keywords": [
     "ai",
