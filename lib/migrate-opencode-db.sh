@@ -157,7 +157,17 @@ split_one_directory() {
   local target_dir="$TARGET_ROOT/$new_id"
   local target_db="$target_dir/opencode.db"
 
-  echo "  ▶ $new_id  ($expected sessions)  ← $src_dir"
+  # opencode keys a project by its git ROOT COMMIT hash (or ID.global for
+  # non-git dirs) — NOT by the on-disk folder name. The source DB already
+  # stores these correct ids. Pick the dominant non-global project_id for this
+  # directory; fall back to 'global'. Rewriting project_id to "$new_id" (the
+  # folder hash) is what hid every migrated session: opencode's computed id
+  # never matched it.
+  local canonical_id
+  canonical_id=$(sqlite3 "$SNAPSHOT" "SELECT project_id FROM session WHERE directory='$src_dir' AND project_id<>'global' GROUP BY project_id ORDER BY COUNT(*) DESC LIMIT 1;")
+  [[ -z "$canonical_id" ]] && canonical_id="global"
+
+  echo "  ▶ $new_id  ($expected sessions, project_id=$canonical_id)  ← $src_dir"
 
   if [[ "$APPLY" != "true" ]]; then
     echo "    (dry run — would create $target_db)"
@@ -180,13 +190,20 @@ PRAGMA foreign_keys = OFF;
 ATTACH DATABASE '$SNAPSHOT' AS src;
 BEGIN;
 
--- 1. Project row (synthetic, keyed by new_id)
+-- 0. Migration tracking rows. Without these the target DB has the full schema
+--    but an empty __drizzle_migrations table, so opencode replays its bundled
+--    migrations and crashes on "CREATE TABLE project → table already exists".
+INSERT INTO __drizzle_migrations SELECT * FROM src.__drizzle_migrations;
+
+-- 1. Project row — copy the real opencode project keyed by canonical_id
+--    (canonical_id = git root commit hash, or 'global' for non-git dirs),
+--    preserving its OWN id so opencode's computed id matches on lookup.
 INSERT OR REPLACE INTO project (id, worktree, vcs, name, icon_url, icon_color, time_created, time_updated, time_initialized, sandboxes, commands, icon_url_override)
 SELECT
-  '$new_id',
-  '$src_dir',
+  id,
+  worktree,
   vcs,
-  COALESCE(name, '$new_id'),
+  COALESCE(name, '$canonical_id'),
   icon_url,
   icon_color,
   time_created,
@@ -196,24 +213,23 @@ SELECT
   commands,
   icon_url_override
 FROM src.project
-WHERE id IN (SELECT DISTINCT project_id FROM src.session WHERE directory = '$src_dir')
-ORDER BY time_created ASC
-LIMIT 1;
+WHERE id = '$canonical_id';
 
--- If no project record existed (orphan project_ids), insert a minimal one.
+-- If no project record existed (e.g. only 'global' sessions), insert a minimal one.
 INSERT OR IGNORE INTO project (id, worktree, time_created, time_updated, sandboxes)
 VALUES (
-  '$new_id',
+  '$canonical_id',
   '$src_dir',
   (SELECT COALESCE(MIN(time_created), strftime('%s','now')*1000) FROM src.session WHERE directory = '$src_dir'),
   (SELECT COALESCE(MAX(time_updated), strftime('%s','now')*1000) FROM src.session WHERE directory = '$src_dir'),
   '[]'
 );
 
--- 2. Sessions (rewrite project_id to new_id)
+-- 2. Sessions (rewrite project_id to canonical_id — consolidates this dir's
+--    'global' stragglers and real-project sessions under one coherent project)
 INSERT INTO session
 SELECT
-  id, '$new_id' AS project_id, parent_id, slug, directory, title, version,
+  id, '$canonical_id' AS project_id, parent_id, slug, directory, title, version,
   share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
   revert, permission, time_created, time_updated, time_compacting, time_archived,
   workspace_id, path, agent, model, cost, tokens_input, tokens_output,
@@ -248,7 +264,7 @@ WHERE ss.session_id IN (SELECT id FROM src.session WHERE directory = '$src_dir')
 
 -- 8. Permission (one-per-project, rewrite project_id)
 INSERT INTO permission
-SELECT '$new_id', time_created, time_updated, data
+SELECT '$canonical_id', time_created, time_updated, data
 FROM src.permission
 WHERE project_id IN (SELECT DISTINCT project_id FROM src.session WHERE directory = '$src_dir')
 LIMIT 1;
