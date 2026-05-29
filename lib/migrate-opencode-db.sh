@@ -97,7 +97,7 @@ phase_plan() {
   echo "🗺️  Planning migration…"
   echo ""
   PLAN_FILE="/tmp/opencode-migrate-plan-${TIMESTAMP}.tsv"
-  > "$PLAN_FILE"
+  : > "$PLAN_FILE"
 
   local dirs_query="SELECT directory, COUNT(*) AS c FROM session GROUP BY directory ORDER BY c DESC;"
 
