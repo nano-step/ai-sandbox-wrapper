@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [5.4.1] — 2026-05-29
+
+### Fixed
+- fix(ai-run): make opencode db isolation work on Docker Desktop virtiofs
+- fix(migrate): preserve opencode project_id and seed migration tracking
+
+### Documentation
+- docs(opencode-db): v5.4.0 migration guide, opt-out, and known limitation
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.4.1`
+
+---
+
 ---
 
 ## 📢 Big Update — v5.4.0 (2026-05-29): OpenCode Per-Project Database Isolation
