@@ -1021,6 +1021,117 @@ for tool in $(get_installed_tools); do
   done
 done
 
+# ============================================================================
+# OPENCODE PER-PROJECT SQLITE ISOLATION
+# Gives each project its own opencode.db / -wal / -shm files to prevent
+# concurrent-writer corruption. See openspec/changes/opencode-db-isolation/.
+# ============================================================================
+
+# Compute a deterministic 16-hex-char hash for the current workdir's project.
+# Resolver priority: git remote origin > git toplevel > realpath of workdir.
+# Usage: compute_opencode_project_hash "/path/to/workdir"
+compute_opencode_project_hash() {
+  local workdir="$1"
+  local project_id=""
+
+  # 1. git repo with origin remote
+  local remote_url
+  remote_url=$(git -C "$workdir" config --get remote.origin.url 2>/dev/null || true)
+  if [[ -n "$remote_url" ]]; then
+    project_id="git:${remote_url}"
+  else
+    # 2. git repo without origin (use toplevel path)
+    local toplevel
+    toplevel=$(git -C "$workdir" rev-parse --show-toplevel 2>/dev/null || true)
+    if [[ -n "$toplevel" ]]; then
+      local real_toplevel
+      real_toplevel=$(realpath "$toplevel" 2>/dev/null || echo "$toplevel")
+      project_id="gitroot:${real_toplevel}"
+    else
+      # 3. non-git directory
+      local real_workdir
+      real_workdir=$(realpath "$workdir" 2>/dev/null || echo "$workdir")
+      project_id="path:${real_workdir}"
+    fi
+  fi
+
+  # sha256 truncated to 16 hex chars
+  printf '%s' "$project_id" | openssl dgst -sha256 -r | cut -c1-16
+}
+
+# Print the host directory path for a given project hash's SQLite files.
+# Usage: opencode_db_dir "abc123..."
+opencode_db_dir() {
+  local hash="$1"
+  echo "$HOME/.ai-sandbox/opencode-dbs/${hash}"
+}
+
+# Ensure the per-project SQLite directory and placeholder files exist.
+# Idempotent — does NOT clobber existing files.
+# Usage: ensure_opencode_db_files "abc123..."
+ensure_opencode_db_files() {
+  local hash="$1"
+  local db_dir
+  db_dir=$(opencode_db_dir "$hash")
+
+  mkdir -p "$db_dir"
+  chmod 755 "$db_dir" 2>/dev/null || true
+  for f in opencode.db opencode.db-wal opencode.db-shm; do
+    if [[ ! -f "$db_dir/$f" ]]; then
+      touch "$db_dir/$f"
+      chmod 644 "$db_dir/$f" 2>/dev/null || true
+    fi
+  done
+}
+
+# One-time backup of the pre-existing global SQLite files.
+# No-ops if the .initialized marker already exists.
+# Usage: ensure_opencode_backup
+ensure_opencode_backup() {
+  local marker="$HOME/.ai-sandbox/opencode-dbs/.backups/.initialized"
+
+  if [[ -f "$marker" ]]; then
+    return 0
+  fi
+
+  local timestamp
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  local backup_dir="$HOME/.ai-sandbox/opencode-dbs/.backups/${timestamp}"
+  mkdir -p "$backup_dir"
+
+  local backed_up=""
+  local global_dir="$HOME/.local/share/opencode"
+  for f in opencode.db opencode.db-wal opencode.db-shm; do
+    if [[ -f "$global_dir/$f" ]]; then
+      cp "$global_dir/$f" "$backup_dir/$f"
+      backed_up="${backed_up}${f} "
+    fi
+  done
+
+  # Write marker regardless (even if no files were backed up)
+  mkdir -p "$(dirname "$marker")"
+  echo "timestamp=$timestamp" > "$marker"
+  echo "files=$backed_up" >> "$marker"
+
+  if [[ -n "$backed_up" ]]; then
+    echo "→ backed up pre-existing opencode SQLite files to $backup_dir" >&2
+  fi
+}
+
+# Append the three per-project SQLite file bind mounts to DOCKER_ARGS.
+# Must be called AFTER the ~/.local/share/opencode directory mount is added.
+# Usage: append_opencode_db_mounts "abc123..."
+append_opencode_db_mounts() {
+  local hash="$1"
+  local db_dir
+  db_dir=$(opencode_db_dir "$hash")
+  local container_base="/home/agent/.local/share/opencode"
+
+  for f in opencode.db opencode.db-wal opencode.db-shm; do
+    DOCKER_ARGS+=(-v "${db_dir}/${f}:${container_base}/${f}:delegated")
+  done
+}
+
 setup_opencode_rg_compat() {
   [[ "$TOOL" != "opencode" ]] && return 0
 
@@ -2117,6 +2228,95 @@ generate_container_name() {
   echo "${TOOL:-shell}-${folder_name}-${random_suffix}"
 }
 
+# ============================================================================
+# OPENCODE CONTAINER LIFECYCLE HELPERS
+# Deterministic naming + single-writer reuse for opencode containers.
+# ============================================================================
+
+# Return the deterministic container name for an opencode project hash.
+# Usage: opencode_container_name "abc123..."
+opencode_container_name() {
+  local hash="$1"
+  echo "ai-opencode-${hash}"
+}
+
+# Print container ID if an opencode container with the given name is running.
+# Returns empty string (and non-zero) if not running.
+# Usage: opencode_container_running "ai-opencode-abc123"
+opencode_container_running() {
+  local name="$1"
+  docker ps -q -f "name=^${name}$" 2>/dev/null || true
+}
+
+# Print container ID if an opencode container exists but is stopped.
+# Returns empty string if no stopped container.
+# Usage: opencode_container_stopped "ai-opencode-abc123"
+opencode_container_stopped() {
+  local name="$1"
+  local all_id
+  all_id=$(docker ps -aq -f "name=^${name}$" 2>/dev/null || true)
+  if [[ -n "$all_id" ]]; then
+    local running_id
+    running_id=$(opencode_container_running "$name")
+    if [[ -z "$running_id" ]]; then
+      echo "$all_id"
+      return 0
+    fi
+  fi
+  return 0
+}
+
+# Exec into an already-running opencode container.
+# Validates workdir is mounted, prints reuse notice, runs docker exec.
+# Returns the exit status of docker exec, or 1 on validation failure.
+# Usage: exec_into_opencode_container "ai-opencode-abc123" "/path/to/workdir" args...
+exec_into_opencode_container() {
+  local name="$1"
+  local workdir="$2"
+  shift 2
+  local tool_args=("$@")
+
+  # Validate workdir is inside one of the container's bind-mount sources
+  local mount_sources
+  mount_sources=$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$name" 2>/dev/null || true)
+  if [[ -n "$mount_sources" ]]; then
+    local found=false
+    while IFS= read -r src; do
+      [[ -z "$src" ]] && continue
+      # Check if workdir is under this mount source
+      if [[ "$workdir" == "$src" || "$workdir" == "$src"/* ]]; then
+        found=true
+        break
+      fi
+    done <<< "$mount_sources"
+    if [[ "$found" == "false" ]]; then
+      echo "⚠️  WARNING: $workdir is not inside any workspace mounted in $name. Refusing exec." >&2
+      return 1
+    fi
+  fi
+
+  echo "→ reusing $name (existing opencode container for this project)" >&2
+
+  local exec_tty_flags=""
+  if [[ -t 0 ]] && [[ -t 1 ]]; then
+    exec_tty_flags="-it"
+  fi
+
+  # shellcheck disable=SC2086
+  docker exec $exec_tty_flags --workdir "$workdir" "$name" opencode "${tool_args[@]}"
+}
+
+# Remove a stopped opencode container so a fresh one can be launched.
+# Usage: cleanup_stopped_opencode_container "ai-opencode-abc123"
+cleanup_stopped_opencode_container() {
+  local name="$1"
+  local stopped_id
+  stopped_id=$(opencode_container_stopped "$name")
+  if [[ -n "$stopped_id" ]]; then
+    docker rm "$name" >/dev/null 2>&1 || true
+  fi
+}
+
 # Container name and TTY allocation
 CONTAINER_NAME=""
 TTY_FLAGS="-it"  # Default to interactive mode
@@ -3064,9 +3264,48 @@ EOF
     up --remove-orphans
 fi
 
+# ============================================================================
+# OPENCODE DB ISOLATION: container reuse + deterministic naming
+# Must run BEFORE DOCKER_ARGS assembly so CONTAINER_NAME can be overridden.
+# ============================================================================
+OPENCODE_PROJECT_HASH=""
+OPENCODE_SKIP_RM=false  # When true, omit --rm from docker run
+
+if [[ "$TOOL" == "opencode" ]]; then
+  # 1. One-time backup of pre-existing global SQLite files
+  ensure_opencode_backup
+
+  # 2. Compute project hash and deterministic container name
+  OPENCODE_PROJECT_HASH=$(compute_opencode_project_hash "$CURRENT_DIR")
+  OPENCODE_CONTAINER_NAME=$(opencode_container_name "$OPENCODE_PROJECT_HASH")
+
+  # 3. Ensure per-project SQLite placeholders exist on host
+  ensure_opencode_db_files "$OPENCODE_PROJECT_HASH"
+
+  # 4. If a running container exists, exec into it and exit
+  local_running_id=$(opencode_container_running "$OPENCODE_CONTAINER_NAME")
+  if [[ -n "$local_running_id" ]]; then
+    exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
+    exit $?
+  fi
+
+  # 5. If a stopped container exists, clean it up before fresh run
+  cleanup_stopped_opencode_container "$OPENCODE_CONTAINER_NAME"
+
+  # 6. Override CONTAINER_NAME (deterministic, regardless of TTY)
+  CONTAINER_NAME="--name $OPENCODE_CONTAINER_NAME"
+
+  # 7. Mark that --rm should be omitted for opencode
+  OPENCODE_SKIP_RM=true
+fi
+
 # Build docker run arguments as an array (handles paths with spaces correctly)
 DOCKER_ARGS=()
-DOCKER_ARGS+=($CONTAINER_NAME --rm $TTY_FLAGS)
+if [[ "$OPENCODE_SKIP_RM" == "true" ]]; then
+  DOCKER_ARGS+=($CONTAINER_NAME $TTY_FLAGS)
+else
+  DOCKER_ARGS+=($CONTAINER_NAME --rm $TTY_FLAGS)
+fi
 DOCKER_ARGS+=(--init)
 DOCKER_ARGS+=(--platform "$PLATFORM")
 DOCKER_ARGS+=($ENTRYPOINT_OVERRIDE)
@@ -3101,6 +3340,10 @@ if docker volume inspect ai-open-design-data >/dev/null 2>&1; then
 fi
 DOCKER_ARGS+=($SHARED_CACHE_MOUNTS)
 DOCKER_ARGS+=($NANO_BRAIN_MOUNT)
+# Opencode DB isolation: overlay per-project SQLite files AFTER all directory mounts
+if [[ -n "$OPENCODE_PROJECT_HASH" ]]; then
+  append_opencode_db_mounts "$OPENCODE_PROJECT_HASH"
+fi
 DOCKER_ARGS+=(-w "$CURRENT_DIR")
 DOCKER_ARGS+=(--env-file "$ENV_FILE")
 DOCKER_ARGS+=(-e TERM="$TERM")
@@ -3156,4 +3399,22 @@ if docker image inspect ai-open-design:latest >/dev/null 2>&1; then
 fi
 
 # Execute docker run with proper argument handling
-docker run "${DOCKER_ARGS[@]}"
+if [[ "$OPENCODE_SKIP_RM" == "true" ]]; then
+  # Opencode: run without --rm. Handle "name already in use" race condition.
+  # Docker returns exit code 125 for daemon errors including name conflicts.
+  # We run docker run directly (no output capture) to preserve TTY allocation,
+  # then check if the failure was a name conflict by seeing if the container is now running.
+  docker run "${DOCKER_ARGS[@]}" && exit_code=0 || exit_code=$?
+  if [[ $exit_code -eq 125 ]]; then
+    # Check if the container is now running (another invocation won the race)
+    _oc_race_check=$(opencode_container_running "$OPENCODE_CONTAINER_NAME")
+    if [[ -n "$_oc_race_check" ]]; then
+      echo "→ container name race detected, retrying via exec..." >&2
+      exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
+      exit $?
+    fi
+  fi
+  exit $exit_code
+else
+  docker run "${DOCKER_ARGS[@]}"
+fi

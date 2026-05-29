@@ -50,6 +50,12 @@ If you have the old package globally installed, uninstall it:
 npm uninstall -g @kokorolx/ai-sandbox-wrapper
 ```
 
+### Per-Project OpenCode Database Isolation
+
+OpenCode containers now use isolated SQLite databases per project to prevent corruption from concurrent writes. Container `ai-opencode-<hash>` is reused across terminals attached to the same project; second-terminal invocations attach via `docker exec`.
+
+**Known limitation:** when two terminals run opencode for the same project, quitting the first kills the second too (Docker PID 1 semantics). See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for details and workarounds.
+
 ### v2.7.0: Git Fetch-Only Mode & Bundled Skills
 
 - **Git Fetch-Only**: Allow git fetch/pull but block push — perfect for AI agents that should read but not write
@@ -388,6 +394,8 @@ The exact preset definitions live in [`ci/presets/base.env`](./ci/presets/base.e
 Native configs are bind-mounted:
 - `~/.config/opencode` ↔ `/home/agent/.config/opencode`
 - `~/.local/share/opencode` ↔ `/home/agent/.local/share/opencode`
+
+**Per-project SQLite isolation:** OpenCode's database files (`opencode.db`, `opencode.db-wal`, `opencode.db-shm`) are isolated per-project under `~/.ai-sandbox/opencode-dbs/<hash>/` to prevent SQLite WAL corruption from concurrent writes. The `<hash>` is computed deterministically from the git remote URL (preferred), git toplevel, or absolute path. All other opencode data (sessions, MCP config, skills, logs, storage payloads) remains shared across projects.
 
 ---
 
