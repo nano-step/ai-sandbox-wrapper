@@ -447,6 +447,10 @@ AI_RUN_DISABLE_NANO_BRAIN_AUTO_REPAIR=1 ai-run npx nano-brain status
 # Management
 npx @nano-step/ai-sandbox-wrapper workspace list
 npx @nano-step/ai-sandbox-wrapper clean
+
+# OpenCode DB migration (one-time, splits global DB into per-project DBs)
+npx @nano-step/ai-sandbox-wrapper migrate-opencode-db          # dry run (preview only)
+npx @nano-step/ai-sandbox-wrapper migrate-opencode-db --apply  # perform migration
 ```
 
 ---
