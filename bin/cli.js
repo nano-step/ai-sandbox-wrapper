@@ -22,6 +22,8 @@ Usage:
 Commands:
   setup                 Run interactive setup (configure workspaces, select tools)
   rebuild [--fresh]     Rebuild Docker image using existing config (no menu required)
+  migrate-opencode-db   Split global opencode SQLite DB into per-project DBs
+                          Dry run by default. Pass --apply to perform migration.
   update                Interactive menu to manage config (workspaces, git, networks)
   clean                 Interactive cleanup for caches/configs
   clean cache [type]    Clear shared package caches (npm, bun, pip, playwright-browsers)
@@ -55,6 +57,8 @@ Examples:
   npx @nano-step/ai-sandbox-wrapper setup
   npx @nano-step/ai-sandbox-wrapper rebuild
   npx @nano-step/ai-sandbox-wrapper rebuild --fresh
+  npx @nano-step/ai-sandbox-wrapper migrate-opencode-db          # dry run
+  npx @nano-step/ai-sandbox-wrapper migrate-opencode-db --apply  # perform migration
   npx @nano-step/ai-sandbox-wrapper update
   npx @nano-step/ai-sandbox-wrapper config show --json
   npx @nano-step/ai-sandbox-wrapper config tool claude
@@ -104,6 +108,29 @@ function runSetup() {
     } else {
       console.error('❌ Error running setup:', err.message);
     }
+    process.exit(1);
+  });
+
+  child.on('close', (code) => {
+    process.exit(code || 0);
+  });
+}
+
+function runMigrateOpencodeDb(forwardArgs) {
+  const script = path.join(packageRoot, 'lib', 'migrate-opencode-db.sh');
+
+  if (!fs.existsSync(script)) {
+    console.error('❌ Error: lib/migrate-opencode-db.sh not found at', script);
+    process.exit(1);
+  }
+
+  const child = spawn('bash', [script, ...forwardArgs], {
+    stdio: 'inherit',
+    env: process.env
+  });
+
+  child.on('error', (err) => {
+    console.error('❌ Failed to run migration script:', err.message);
     process.exit(1);
   });
 
@@ -1385,6 +1412,9 @@ switch (command) {
     break;
   case 'rebuild':
     runRebuild();
+    break;
+  case 'migrate-opencode-db':
+    runMigrateOpencodeDb(args.slice(1));
     break;
   case 'help':
   case '--help':

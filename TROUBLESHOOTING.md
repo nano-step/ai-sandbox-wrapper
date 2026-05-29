@@ -281,3 +281,44 @@ sudo systemctl start docker
    - Output of `AI_RUN_DEBUG=1 ai-run <tool>`
    - Your OS and architecture (`uname -a`)
    - Docker version (`docker --version`)
+
+---
+
+## Known Limitation: First Terminal Is Master
+
+When you have two terminals open against the same project (same git repo, or same non-git directory), the second terminal attaches to the running container via `docker exec`. The container's PID 1 is the opencode TUI started by the first terminal.
+
+If you quit opencode in the first terminal, Docker kills the entire container — including the opencode in the second terminal. This is an accepted trade-off of the simple no-sentinel design (see `openspec/changes/opencode-db-isolation/design.md` Decision 3).
+
+**Workarounds:**
+- Coordinate: agree which terminal is the "master" and quit it last.
+- Use separate projects (different directories, different git remotes) — each gets its own container.
+- Wait for the future opt-in sentinel mode (tracked in [ROADMAP.md](ROADMAP.md)).
+
+---
+
+## Rolling Back OpenCode DB Isolation
+
+If you want to revert to pre-isolation behavior:
+
+1. Stop and remove all opencode containers:
+   ```bash
+   docker ps -aq -f "name=^ai-opencode-" | xargs -r docker rm -f
+   ```
+
+2. Restore your global SQLite from the one-time backup (if you had pre-existing data):
+   ```bash
+   BACKUP=$(ls -1dt ~/.ai-sandbox/opencode-dbs/.backups/[0-9]* 2>/dev/null | head -1)
+   if [[ -n "$BACKUP" && -f "$BACKUP/opencode.db" ]]; then
+     cp "$BACKUP/opencode.db" ~/.local/share/opencode/opencode.db
+     [[ -f "$BACKUP/opencode.db-wal" ]] && cp "$BACKUP/opencode.db-wal" ~/.local/share/opencode/
+     [[ -f "$BACKUP/opencode.db-shm" ]] && cp "$BACKUP/opencode.db-shm" ~/.local/share/opencode/
+   fi
+   ```
+
+3. (Optional) Remove per-project SQLite files:
+   ```bash
+   rm -rf ~/.ai-sandbox/opencode-dbs/<hash>/   # keep .backups/ if you want recovery history
+   ```
+
+4. Downgrade ai-sandbox-wrapper to the previous version, or wait for an `OPENCODE_DB_ISOLATION=0` opt-out flag.
