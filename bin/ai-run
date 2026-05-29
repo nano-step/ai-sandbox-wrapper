@@ -2277,25 +2277,13 @@ exec_into_opencode_container() {
   shift 2
   local tool_args=("$@")
 
-  # Validate workdir is inside one of the container's bind-mount sources
-  local mount_sources
-  mount_sources=$(docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$name" 2>/dev/null || true)
-  if [[ -n "$mount_sources" ]]; then
-    local found=false
-    while IFS= read -r src; do
-      [[ -z "$src" ]] && continue
-      # Check if workdir is under this mount source
-      if [[ "$workdir" == "$src" || "$workdir" == "$src"/* ]]; then
-        found=true
-        break
-      fi
-    done <<< "$mount_sources"
-    if [[ "$found" == "false" ]]; then
-      echo "⚠️  WARNING: $workdir is not inside any workspace mounted in $name. Refusing exec." >&2
-      return 1
-    fi
-  fi
-
+  # NOTE: We previously validated $workdir against the container's bind-mount
+  # sources via `docker inspect`, but this was too strict — Docker Desktop on
+  # macOS canonicalizes mount source paths (e.g. /host_mnt/Users/...) so the
+  # raw $PWD never matched, causing legitimate reuse to fail. We now let
+  # `docker exec --workdir` itself fail with a clear error if the path is not
+  # mounted in the running container; that's a better signal than our
+  # second-guessing.
   echo "→ reusing $name (existing opencode container for this project)" >&2
 
   local exec_tty_flags=""
