@@ -50,9 +50,19 @@ If you have the old package globally installed, uninstall it:
 npm uninstall -g @kokorolx/ai-sandbox-wrapper
 ```
 
-### Per-Project OpenCode Database Isolation
+### v5.4.0: Per-Project OpenCode Database Isolation
 
-OpenCode containers now use isolated SQLite databases per project to prevent corruption from concurrent writes. Container `ai-opencode-<hash>` is reused across terminals attached to the same project; second-terminal invocations attach via `docker exec`.
+OpenCode containers now use isolated SQLite databases per project to prevent corruption from concurrent writes ([sst/opencode#14194](https://github.com/sst/opencode/issues/14194)). Container `ai-opencode-<hash>` is reused across terminals attached to the same project; second-terminal invocations attach via `docker exec`.
+
+📖 **Migrating from v5.3.x?** Read [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) — your old session history is preserved but needs one of: migration, fresh start, or opt-out.
+
+```bash
+# Migrate existing sessions into per-project DBs (recommended)
+npx @nano-step/ai-sandbox-wrapper@latest migrate-opencode-db --apply
+
+# Or opt out of isolation entirely (keep legacy global DB)
+export OPENCODE_DB_ISOLATION=0
+```
 
 **Known limitation:** when two terminals run opencode for the same project, quitting the first kills the second too (Docker PID 1 semantics). See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for details and workarounds.
 
