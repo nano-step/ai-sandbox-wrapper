@@ -1099,6 +1099,19 @@ ensure_opencode_db_files() {
       chmod 644 "$db_dir/$f" 2>/dev/null || true
     fi
   done
+
+  # The file-level bind-mount TARGETS must already exist in the global opencode
+  # dir. Docker Desktop (virtiofs) cannot create a mountpoint inside a
+  # virtiofs-backed directory mount — runc rejects it as "outside of rootfs".
+  # The per-project files above are the mount SOURCE; these are the TARGET
+  # placeholders. opencode.db usually exists; -wal/-shm often don't. touch only
+  # creates when missing (an empty -wal/-shm is a valid "no active state" and
+  # never clobbers the user's real global opencode.db).
+  local global_dir="$HOME/.local/share/opencode"
+  mkdir -p "$global_dir"
+  for f in opencode.db opencode.db-wal opencode.db-shm; do
+    [[ -e "$global_dir/$f" ]] || touch "$global_dir/$f"
+  done
 }
 
 # One-time backup of the pre-existing global SQLite files.
@@ -1135,20 +1148,22 @@ ensure_opencode_backup() {
   fi
 }
 
-# Append the per-project SQLite db directory bind mount to DOCKER_ARGS.
-# Mounts the WHOLE per-project dir (not a single file) so SQLite can rename()
-# the .db during WAL checkpoint and create -wal/-shm siblings as real files.
-# A wrapper entrypoint symlinks ~/.local/share/opencode/opencode.db into this
-# directory before opencode starts.
+# Append per-project SQLite file-level bind mounts to DOCKER_ARGS.
+# Implements design.md Decision 2: three file-level overlays placed on top of
+# the existing ~/.local/share/opencode directory mount, so opencode reads/writes
+# its canonical path (/home/agent/.local/share/opencode/opencode.db) but the
+# kernel redirects I/O to the per-project file on the host.
+# Placeholder files are created on the host by ensure_opencode_db_files() so
+# Docker does not auto-create them as directories.
 # Usage: append_opencode_db_mounts "abc123..."
 append_opencode_db_mounts() {
   local hash="$1"
   local db_dir
   db_dir=$(opencode_db_dir "$hash")
 
-  # Mount per-project DB dir into a dedicated path (NOT under ~/.local/share/opencode
-  # to avoid nested-mount weirdness on Docker Desktop / VirtioFS).
-  DOCKER_ARGS+=(-v "${db_dir}:/home/agent/.opencode-db-isolated:delegated")
+  DOCKER_ARGS+=(-v "${db_dir}/opencode.db:/home/agent/.local/share/opencode/opencode.db:delegated")
+  DOCKER_ARGS+=(-v "${db_dir}/opencode.db-wal:/home/agent/.local/share/opencode/opencode.db-wal:delegated")
+  DOCKER_ARGS+=(-v "${db_dir}/opencode.db-shm:/home/agent/.local/share/opencode/opencode.db-shm:delegated")
 }
 
 setup_opencode_rg_compat() {
@@ -3295,7 +3310,11 @@ fi
 OPENCODE_PROJECT_HASH=""
 OPENCODE_SKIP_RM=false  # When true, omit --rm from docker run
 
-if [[ "$TOOL" == "opencode" ]]; then
+# OPENCODE_DB_ISOLATION=0 disables per-project DB isolation for opencode.
+# Container falls back to legacy behavior: global mount, random container name,
+# --rm flag. Useful for users who prefer the unified global session DB or want
+# to roll back without downgrading the package version.
+if [[ "$TOOL" == "opencode" && "${OPENCODE_DB_ISOLATION:-1}" != "0" ]]; then
   # 1. One-time backup of pre-existing global SQLite files
   ensure_opencode_backup
 

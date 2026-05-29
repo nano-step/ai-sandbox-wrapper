@@ -2,8 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+---
 
+## 📢 Big Update — v5.4.0 (2026-05-29): OpenCode Per-Project Database Isolation
 
+OpenCode's session database is now isolated per project to prevent SQLite
+corruption from concurrent writes
+([sst/opencode#14194](https://github.com/sst/opencode/issues/14194)).
+
+**Action required for existing users**: your old session history is safe on
+disk but not visible to opencode after upgrade until you do one of three
+things:
+
+| Path | Command | Keeps old sessions? |
+|------|---------|---------------------|
+| **Migrate** (recommended) | `npx @nano-step/ai-sandbox-wrapper@latest migrate-opencode-db --apply` | ✅ Yes |
+| **Fresh start** | Just run `ai-run opencode` in each project | ❌ No (but old DB preserved on disk) |
+| **Opt out** | `export OPENCODE_DB_ISOLATION=0` | ✅ Yes (legacy global DB, no corruption fix) |
+
+**Read full migration guide**: [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
+
+**Known limitation**: When two terminals run opencode for the same project,
+quitting the first kills the second (Docker PID 1 semantics).
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#known-limitation-first-terminal-is-master).
+
+---
 
 
 
