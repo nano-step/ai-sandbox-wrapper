@@ -3211,9 +3211,14 @@ if [[ -n "$TTY_FLAGS" ]]; then
 fi
 
 # Ensure sandbox directories are writable on host before mounting
-# This helps with UID/GID mapping issues in Docker Desktop
+# (Docker Desktop UID/GID mapping). These two dirs are the bind-mount roots
+# (home -> /home/agent, shared/git), so chmod'ing the roots is what the mount
+# actually needs. Do NOT recurse: a recursive walk has to stat all ~600k
+# entries under home (the .cache/go/.npm trees dominate) and cost ~15-18s
+# every run for a pure no-op -- those files already carry owner-write and
+# the deep caches are container-owned. Non-recursive keeps it instant.
 mkdir -p "$HOME_DIR" "$GIT_SHARED_DIR"
-chmod -R u+w "$HOME_DIR" "$GIT_SHARED_DIR" 2>/dev/null || true
+chmod u+w "$HOME_DIR" "$GIT_SHARED_DIR" 2>/dev/null || true
 
 if [[ ! -f "$CACHE_DIR/playwright-browsers/.seeded" ]]; then
   if docker run --rm "$IMAGE" test -d /opt/playwright-browsers 2>/dev/null; then
