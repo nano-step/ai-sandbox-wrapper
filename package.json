@@ -39,7 +39,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node bin/cli.js help && bash -n setup.sh && echo '✅ All tests passed'",
+    "test": "node bin/cli.js help && bash -n setup.sh && bash tests/sandbox-writability/test-dir-writability.sh && echo '✅ All tests passed'",
     "lint": "bash -n setup.sh && bash -n lib/*.sh && echo '✅ Shell scripts valid'",
     "lint:js": "node --check bin/cli.js && echo '✅ JavaScript valid'",
     "prepublishOnly": "npm run lint && npm run lint:js && npm run test"
