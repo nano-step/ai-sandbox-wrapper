@@ -3341,8 +3341,7 @@ if [[ "$TOOL" == "opencode" && "${OPENCODE_DB_ISOLATION:-1}" != "0" ]]; then
     _oc_db_dir=$(opencode_db_dir "$OPENCODE_PROJECT_HASH")
     if [[ ! -f "$_oc_db_dir/opencode.db-wal" ]] || [[ ! -f "$_oc_db_dir/opencode.db-shm" ]]; then
       echo "→ per-project WAL/SHM missing (SQLite checkpoint), restarting container to restore mounts..." >&2
-      docker stop "$OPENCODE_CONTAINER_NAME" >/dev/null 2>&1 || true
-      docker rm "$OPENCODE_CONTAINER_NAME" >/dev/null 2>&1 || true
+      docker rm -f "$OPENCODE_CONTAINER_NAME" >/dev/null 2>&1 || true
       ensure_opencode_db_files "$OPENCODE_PROJECT_HASH"
       # Fall through to step 5 + fresh docker run below
     else
