@@ -3334,8 +3334,21 @@ if [[ "$TOOL" == "opencode" && "${OPENCODE_DB_ISOLATION:-1}" != "0" ]]; then
   local_running_id=""
   local_running_id=$(opencode_container_running "$OPENCODE_CONTAINER_NAME") || true
   if [[ -n "$local_running_id" ]]; then
-    exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
-    exit $?
+    # Validate WAL/SHM bind-mount source files still exist on host.
+    # SQLite checkpoints and deletes them after a clean exit, leaving stale
+    # bind mounts that fall through to the global opencode directory — causing
+    # a DB/WAL mismatch and "unable to open database file" on the next run.
+    _oc_db_dir=$(opencode_db_dir "$OPENCODE_PROJECT_HASH")
+    if [[ ! -f "$_oc_db_dir/opencode.db-wal" ]] || [[ ! -f "$_oc_db_dir/opencode.db-shm" ]]; then
+      echo "→ per-project WAL/SHM missing (SQLite checkpoint), restarting container to restore mounts..." >&2
+      docker stop "$OPENCODE_CONTAINER_NAME" >/dev/null 2>&1 || true
+      docker rm "$OPENCODE_CONTAINER_NAME" >/dev/null 2>&1 || true
+      ensure_opencode_db_files "$OPENCODE_PROJECT_HASH"
+      # Fall through to step 5 + fresh docker run below
+    else
+      exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
+      exit $?
+    fi
   fi
 
   # 5. If a stopped container exists, clean it up before fresh run
