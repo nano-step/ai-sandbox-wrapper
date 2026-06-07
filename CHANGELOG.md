@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.4.4] — 2026-06-07
+
+### Fixed
+- fix(ai-run): remove legacy bash entrypoint wrapper for opencode DB isolation
+- fix: wal-shm mounts incorrect
+- fix(ai-run): use docker rm -f to avoid SIGTERM timeout on stale container
+- fix(ai-run): restart opencode container when WAL/SHM files are missing
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.4.4`
+
+---
+
 ## [5.4.3] — 2026-06-07
 
 ### Fixed
