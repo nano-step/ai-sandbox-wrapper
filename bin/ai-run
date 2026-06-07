@@ -3327,16 +3327,28 @@ if [[ "$TOOL" == "opencode" && "${OPENCODE_DB_ISOLATION:-1}" != "0" ]]; then
   OPENCODE_PROJECT_HASH=$(compute_opencode_project_hash "$CURRENT_DIR")
   OPENCODE_CONTAINER_NAME=$(opencode_container_name "$OPENCODE_PROJECT_HASH")
 
-  # 3. Ensure per-project SQLite placeholders exist on host
-  ensure_opencode_db_files "$OPENCODE_PROJECT_HASH"
-
-  # 4. If a running container exists, exec into it and exit
+  # 3. If a running container exists, exec into it and exit
   local_running_id=""
   local_running_id=$(opencode_container_running "$OPENCODE_CONTAINER_NAME") || true
   if [[ -n "$local_running_id" ]]; then
-    exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
-    exit $?
+    # Check WAL/SHM BEFORE ensure_opencode_db_files() recreates them.
+    # SQLite deletes these files after a clean database close; the host now has
+    # new inodes at those paths, but the running container's bind mounts still
+    # point to the old deleted inodes (visible as nlink=0 inside the container).
+    # Exec-ing into it gives SQLite a stale WAL/SHM → "unable to open database file".
+    _oc_db_dir=$(opencode_db_dir "$OPENCODE_PROJECT_HASH")
+    if [[ ! -f "$_oc_db_dir/opencode.db-wal" ]] || [[ ! -f "$_oc_db_dir/opencode.db-shm" ]]; then
+      echo "→ per-project WAL/SHM missing (SQLite checkpoint), restarting container to restore mounts..." >&2
+      docker rm -f "$OPENCODE_CONTAINER_NAME" >/dev/null 2>&1 || true
+      # Fall through to step 4 below for fresh run
+    else
+      exec_into_opencode_container "$OPENCODE_CONTAINER_NAME" "$CURRENT_DIR" "${TOOL_ARGS[@]}"
+      exit $?
+    fi
   fi
+
+  # 4. Ensure per-project SQLite placeholders exist on host
+  ensure_opencode_db_files "$OPENCODE_PROJECT_HASH"
 
   # 5. If a stopped container exists, clean it up before fresh run
   cleanup_stopped_opencode_container "$OPENCODE_CONTAINER_NAME"
