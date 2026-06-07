@@ -1093,11 +1093,18 @@ ensure_opencode_db_files() {
 
   mkdir -p "$db_dir"
   chmod 755 "$db_dir" 2>/dev/null || true
-  for f in opencode.db opencode.db-wal opencode.db-shm; do
-    if [[ ! -f "$db_dir/$f" ]]; then
-      touch "$db_dir/$f"
-      chmod 644 "$db_dir/$f" 2>/dev/null || true
-    fi
+  # opencode.db: preserve existing data; only create if missing.
+  if [[ ! -f "$db_dir/opencode.db" ]]; then
+    touch "$db_dir/opencode.db"
+    chmod 644 "$db_dir/opencode.db" 2>/dev/null || true
+  fi
+  # WAL and SHM are transient SQLite files. Always truncate to 0-bytes so a
+  # fresh container never inherits stale content from a prior ungraceful exit.
+  # A 0-byte WAL/SHM is valid — SQLite initialises them on first open.
+  # Using : > file (shell built-in) avoids a truncate(1) portability concern.
+  for f in opencode.db-wal opencode.db-shm; do
+    : > "$db_dir/$f"
+    chmod 644 "$db_dir/$f" 2>/dev/null || true
   done
 
   # The file-level bind-mount TARGETS must already exist in the global opencode
@@ -3122,16 +3129,10 @@ EOF
 ENTRYPOINT_OVERRIDE=""
 if [[ -n "$TOOL" && "$SHELL_MODE" != "true" ]]; then
   if [[ "$TOOL" == "opencode" && -n "$OPENCODE_PROJECT_HASH" ]]; then
-    # OPENCODE DB ISOLATION: wrap entrypoint with bash to setup symlink
-    # from ~/.local/share/opencode/opencode.db → /home/agent/.opencode-db-isolated/opencode.db
-    # so SQLite WAL checkpoints / renames work on a real directory mount.
-    ENTRYPOINT_OVERRIDE="--entrypoint bash"
-    DOCKER_COMMAND=(
-      "-c"
-      'set -e; mkdir -p /home/agent/.opencode-db-isolated /home/agent/.local/share/opencode; ln -sf /home/agent/.opencode-db-isolated/opencode.db /home/agent/.local/share/opencode/opencode.db; exec opencode "$@"'
-      "opencode"
-      "${TOOL_ARGS[@]}"
-    )
+    # DB isolation is handled via file-level bind mounts (append_opencode_db_mounts).
+    # Run opencode directly — no bash wrapper or symlink needed.
+    ENTRYPOINT_OVERRIDE="--entrypoint opencode"
+    DOCKER_COMMAND=("${TOOL_ARGS[@]}")
   else
     # Direct tool execution: override entrypoint to the tool
     ENTRYPOINT_OVERRIDE="--entrypoint $TOOL"
