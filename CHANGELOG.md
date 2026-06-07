@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 
 
+
+## [5.4.3] — 2026-06-07
+
+### Fixed
+- fix(ai-run): restart opencode container when WAL/SHM files are missing (#34)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.4.3`
+
+---
+
 ## [5.4.2] — 2026-05-30
 
 _No notable changes_
