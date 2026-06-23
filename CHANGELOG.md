@@ -2,8 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.5.0] — 2026-06-23
 
+### Added
+- feat(ai-run): add `--cdp-port` flag for manual Chrome CDP port selection
+- feat(ai-run): add `CHROME_CDP_PORT` env var support (persistent config)
+- Precedence: `--cdp-port` flag > `CHROME_CDP_PORT` env var > auto-computed hash
 
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.5.0`
+
+---
 
 
 ## [5.4.4] — 2026-06-07
