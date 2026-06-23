@@ -45,6 +45,7 @@ Examples:
   ai-run opencode --shell                 # Start shell, run tool manually
   ai-run aider -n mynetwork               # Connect to Docker network
   ai-run opencode --git-fetch             # Git fetch only (no push)
+  ai-run opencode --cdp-port 9222         # Use specific Chrome CDP port
 
 Documentation: https://github.com/nano-step/ai-sandbox-wrapper
 EOF
@@ -82,6 +83,11 @@ Runtime Environment Variables (inline with ai-run):
   PORT_BIND=all               Bind exposed ports to all interfaces (0.0.0.0) instead of localhost
                               ⚠️  Security risk - use only when needed
                               Example: PORT_BIND=all ai-run opencode web -e 4096
+
+  CHROME_CDP_PORT=9222        Override the auto-computed Chrome CDP port (range: 1-65535)
+                              Default: 19222 + (hash(container_name) % 100)
+                              Can also use --cdp-port flag (flag takes precedence over env var)
+                              Example: CHROME_CDP_PORT=9222 ai-run opencode
 
   PORT=3000,4000              (Deprecated) Expose ports - use --expose flag instead
                               Example: PORT=3000 ai-run opencode
@@ -508,6 +514,18 @@ while [[ $# -gt 0 ]]; do
     --no-nano-brain-auto-repair)
       NANO_BRAIN_AUTO_REPAIR=false
       shift
+      ;;
+    --cdp-port)
+      shift
+      if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+        if (( $1 < 1 || $1 > 65535 )); then
+          echo "❌ ERROR: --cdp-port value '$1' out of range (1-65535)" >&2; exit 1
+        fi
+        MANUAL_CDP_PORT="$1"
+        shift
+      else
+        echo "❌ ERROR: --cdp-port requires a numeric value (e.g. 9222)" >&2; exit 1
+      fi
       ;;
     *)
       TOOL_ARGS+=("$1")
@@ -1238,6 +1256,8 @@ fi
 # its own MCP entry; entries are sweep-cleaned on every start.
 HOST_CHROME_CDP=false
 HOST_CHROME_CDP_PORT=19222
+# Precedence: --cdp-port flag (set in flag parsing loop) > CHROME_CDP_PORT env var > auto-computed
+[[ -z "${MANUAL_CDP_PORT:-}" ]] && MANUAL_CDP_PORT="${CHROME_CDP_PORT:-}"
 PLAYWRIGHT_MCP_NAME=""
 CHROME_DEVTOOLS_MCP_NAME=""
 # Portable symlink-resolving SCRIPT_DIR (macOS readlink has no -f).
@@ -1288,9 +1308,15 @@ if [[ "$TOOL" == "opencode" ]] && command -v jq &>/dev/null && [[ -f "$AI_SANDBO
     CONTAINER_NAME_VALUE="${CONTAINER_NAME#--name }"
     [[ "$CONTAINER_NAME_VALUE" == "$CONTAINER_NAME" ]] && CONTAINER_NAME_VALUE="anon-$$"
 
-    # Deterministic port per container name
-    CONTAINER_HASH=$(echo "$CONTAINER_NAME_VALUE" | md5sum | cut -c1-4)
-    HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
+    # Port assignment: --cdp-port flag > CHROME_CDP_PORT env var > auto-computed hash
+    if [[ -n "$MANUAL_CDP_PORT" ]]; then
+      HOST_CHROME_CDP_PORT="$MANUAL_CDP_PORT"
+      echo "  📌 Using manual CDP port: $HOST_CHROME_CDP_PORT"
+    else
+      # Deterministic port per container name
+      CONTAINER_HASH=$(echo "$CONTAINER_NAME_VALUE" | md5sum | cut -c1-4)
+      HOST_CHROME_CDP_PORT=$((19222 + 0x$CONTAINER_HASH % 100))
+    fi
 
     # Only register entries for MCP binaries actually present in the image
     # (tracked in $AI_SANDBOX_CONFIG by setup.sh). Otherwise opencode would
