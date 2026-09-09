@@ -109,6 +109,45 @@ jobs:
           echo "--- dockerfiles/${{ inputs.tool }}/Dockerfile ---"
           cat dockerfiles/${{ inputs.tool }}/Dockerfile
 
+      # Push ai-base:${{ inputs.preset }} to ghcr.io/nano-step/ai-base.
+      # Position rationale:
+      #   - After tool build (line above) so ai-base:latest is consumed by the tool layer.
+      #   - Before smoke test (line below) so a broken base is caught before downstream
+      #     users pull it via `docker pull ghcr.io/nano-step/ai-base:${{ inputs.preset }}`.
+      # continue-on-error: true ensures a transient ghcr.io outage does not break the
+      # tool-image push (Tag & push to ghcr.io step below); the failure surfaces as a
+      # ::warning:: annotation in the GitHub Actions UI.
+      - name: Push ai-base to ghcr.io
+        if: success() || failure()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="$(node -p "require('./package.json').version")"
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          PRESET="${{ inputs.preset }}"
+          IMAGE="ghcr.io/${OWNER}/ai-base"
+          TAGS=(
+            "${IMAGE}:${PRESET}"
+            "${IMAGE}:${PRESET}-sha-${SHORT_SHA}"
+            "${IMAGE}:${PRESET}-v${VERSION}"
+          )
+          failed=0
+          for tag in "${TAGS[@]}"; do
+            echo "🏷  Tagging ai-base:latest -> ${tag}"
+            docker tag ai-base:latest "${tag}" || { failed=1; continue; }
+            echo "📤 Pushing ${tag}"
+            docker push "${tag}" || { failed=1; continue; }
+          done
+          if [[ "$failed" -ne 0 ]]; then
+            # Surface the failure as a GitHub Actions warning annotation (per
+            # openspec/changes/publish-ai-base-image-ghcr/specs/ai-base-registry-image/spec.md
+            # scenario "Push failure does not break tool image publish").
+            # continue-on-error: true above ensures the subsequent tool push still runs.
+            echo "::warning::One or more ai-base tag pushes failed; tool image push will proceed against locally-loaded ai-base:latest. Re-run workflow_dispatch after verifying ghcr.io connectivity."
+          fi
+          echo "✅ Push step finished (exit status reflects only the last command)"
+
       - name: Smoke test
         run: |
           set -eo pipefail
