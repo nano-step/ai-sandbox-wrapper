@@ -579,6 +579,10 @@ if [[ $NEEDS_BASE_IMAGE -eq 1 ]]; then
   done
 
   export INSTALL_SPEC_KIT INSTALL_UX_UI_PROMAX INSTALL_OPENSPEC INSTALL_PLAYWRIGHT INSTALL_RUBY INSTALL_GO INSTALL_CHROME_DEVTOOLS_MCP INSTALL_PLAYWRIGHT_MCP INSTALL_PLAYWRIGHT_HOST INSTALL_RTK INSTALL_PUP INSTALL_ACLI INSTALL_OPEN_DESIGN
+
+  # Default preset for ai-base registry image lookup (publish-ai-base-image-ghcr).
+  # Users can override: BASE_IMAGE_PRESET=full bash setup.sh
+  export BASE_IMAGE_PRESET="${BASE_IMAGE_PRESET:-base}"
   
   # Save MCP selections to ~/.ai-sandbox/config.json for ai-run auto-configuration
   SANDBOX_CONFIG="$HOME/.ai-sandbox/config.json"

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [5.6.0] — 2026-09-09
+
+### Added
+- feat: publish ai-base image to ghcr.io with pull-on-install helper (#36)
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.6.0`
+
+---
+
 ## [5.5.0] — 2026-06-23
 
 ### Added

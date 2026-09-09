@@ -32,7 +32,7 @@ mkdir -p "$HOME/.ai-sandbox/tools/$TOOL/home"
 
 if [[ -n "$OPENCODE_VERSION" ]]; then
   cat > "dockerfiles/$TOOL/Dockerfile" <<EOF
-FROM ai-base:latest
+FROM ai-base:${BASE_IMAGE_PRESET:-base}
 
 USER root
 ENV HOME=/root
@@ -46,7 +46,7 @@ ENTRYPOINT ["opencode"]
 EOF
 else
   cat <<'EOF' > "dockerfiles/$TOOL/Dockerfile"
-FROM ai-base:latest
+FROM ai-base:${BASE_IMAGE_PRESET:-base}
 
 USER root
 ENV HOME=/root
@@ -62,6 +62,8 @@ fi
 
 # Build image
 echo "Building Docker image for $TOOL (native binary)..."
+# Ensure ai-base:<preset> is available (pulled from ghcr.io/nano-step/ai-base, or built locally).
+bash "$(dirname "$0")/ensure-ai-base.sh" "${BASE_IMAGE_PRESET:-base}"
 docker build ${DOCKER_NO_CACHE:+--no-cache} --network=host -t "ai-$TOOL:latest" "dockerfiles/$TOOL"
 
 echo "✅ $TOOL installed (Native Go Binary)"
