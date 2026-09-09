@@ -191,3 +191,35 @@ which specify uipro openspec
 2. Add option to install tools on host (optional)
 3. Create unified config management for all three tools
 4. Add integration tests for tool availability in containers
+
+### 2026-09-09 - Session: publish-ai-base-image-ghcr
+
+**Changes:**
+- Published ai-base Docker image to ghcr.io/nano-step/ai-base with rolling/sha/semver tag scheme per preset (base, full)
+- New `lib/ensure-ai-base.sh` helper that pulls ai-base:<preset> from ghcr.io before tool install scripts run
+- 14 tool install scripts (claude, codex, aider, amp, auggie, codebuddy, droid, gemini, jules, qoder, qwen, shai, opencode, tool) updated to:
+  - Invoke `lib/ensure-ai-base.sh` before docker build
+  - Generate Dockerfiles with `FROM ai-base:${BASE_IMAGE_PRESET:-base}` (explicit preset tag, no more :latest)
+- `lib/install-base.sh` adds opt-in `BASE_IMAGE_MODE=registry` path that pulls instead of builds (CI parity)
+- `setup.sh` exports `BASE_IMAGE_PRESET=base` by default
+- `.github/workflows/build-image.yml` adds `Push ai-base to ghcr.io` step between tool build and smoke test (with continue-on-error: true)
+
+**New env vars:**
+- `BASE_IMAGE_MODE` (default `local`): switch between local-build and registry-pull behavior
+- `BASE_IMAGE_PRESET` (default `base`): which preset image to pull (`base` or `full`)
+- `BASE_IMAGE_ALLOW_LOCAL_BUILD` (default `1`): fallback to local build when pull fails
+- `AI_IMAGE_BASE_REGISTRY` (default `ghcr.io/nano-step/ai-base`): override registry source
+- `AI_IMAGE_BASE_TAG` (default = preset): pin to a specific sha/semver for rollback
+
+**Files Modified:**
+- `lib/ensure-ai-base.sh` (new, ~140 lines)
+- `lib/install-base.sh` (added registry-mode opt-in)
+- `lib/install-{claude,codex,aider,amp,auggie,codebuddy,droid,gemini,jules,qoder,qwen,shai,opencode,tool}.sh` (14 files; helper invocation + FROM line)
+- `setup.sh` (export BASE_IMAGE_PRESET)
+- `.github/workflows/build-image.yml` (Push ai-base step)
+- `README.md` (new `Pull base image from ghcr.io` section)
+
+**Impact:** First tool install on a clean machine drops from ~15 min to ~30 s. Subsequent installs use cached local image. No Rust/Go/Node toolchain required on the host (when network is available).
+
+**Out of scope:** multi-arch builds, cosign signing, SBOM generation, ghcr.io SHA-tag retention cleanup, modifying bin/ai-run, modifying the unified ai-sandbox:latest flow (lib/build-sandbox.sh), kilo (uses node:22-slim not ai-base).
+

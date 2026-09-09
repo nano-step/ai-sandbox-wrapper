@@ -358,6 +358,24 @@ fi
 
 echo "Building base Docker image..."
 HOST_UID=$(id -u)
+
+# Registry-mode opt-in (publish-ai-base-image-ghcr): pull ai-base from ghcr.io
+# instead of building locally. Used by CI parity paths; default mode (local) is unchanged.
+if [[ "${BASE_IMAGE_MODE:-local}" == "registry" ]]; then
+  PRESET="${BASE_IMAGE_PRESET:-base}"
+  REGISTRY="${AI_IMAGE_BASE_REGISTRY:-ghcr.io/nano-step/ai-base}"
+  TAG="${AI_IMAGE_BASE_TAG:-${PRESET}}"
+  REMOTE_REF="${REGISTRY}:${TAG}"
+  echo "📥 BASE_IMAGE_MODE=registry: pulling ${REMOTE_REF} instead of building"
+  if docker pull "${REMOTE_REF}"; then
+    docker tag "${REMOTE_REF}" "ai-base:${PRESET}" 2>/dev/null || true
+    docker tag "${REMOTE_REF}" "ai-base:latest"
+    echo "✅ Base image pulled (ai-base:latest from ${REMOTE_REF})"
+    exit 0
+  fi
+  echo "❌ Pull of ${REMOTE_REF} failed; falling back to local build"
+fi
+
 docker build ${DOCKER_NO_CACHE:+--no-cache} \
   --network=host \
   --build-arg AGENT_UID="${HOST_UID}" \
