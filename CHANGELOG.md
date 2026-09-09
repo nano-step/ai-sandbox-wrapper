@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 
+
+## [5.7.0] — 2026-09-09
+
+### Added
+- feat: add --cdp-port flag and CHROME_CDP_PORT env var for manual Chrome CDP port selection
+
+**Install:** `npm install @nano-step/ai-sandbox-wrapper@5.7.0`
+
+---
+
 ## [5.6.0] — 2026-09-09
 
 ### Added
